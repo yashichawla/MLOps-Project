@@ -1,0 +1,11 @@
+venv/
+.airflow/
+airflow_artifacts/logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.git/
+.gitignore
+.DS_Store
