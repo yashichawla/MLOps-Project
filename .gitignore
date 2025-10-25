@@ -18,6 +18,7 @@ venv/
 airflow_home/
 airflow.db*
 webserver_config.py
+airflow_artifacts/
 logs/
 airflow_logs/
 dags/__pycache__/
