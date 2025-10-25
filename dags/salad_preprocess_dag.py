@@ -22,6 +22,7 @@ Notes:
 from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
+import os
 import logging
 import pandas as pd
 from airflow.decorators import dag, task, setup
@@ -37,8 +38,8 @@ from scripts.preprocess_salad import (
 # Use a module-level logger; Airflow will route this to task logs.
 logger = logging.getLogger(__name__)
 
-# Resolve project directories once (avoids passing XComs around)
-REPO_ROOT = Path(__file__).resolve().parents[1]
+
+REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1]))
 DATA_DIR = REPO_ROOT / "data"
 TMP_DIR = DATA_DIR / "tmp" / "salad"
 OUT_DIR = DATA_DIR / "processed"

@@ -12,6 +12,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   airflow-init:
     image: apache/airflow:2.9.3-python3.12
@@ -25,7 +26,8 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
-      PYTHONPATH: /opt/airflow/app   # <— import your repo without editable install
+      PYTHONPATH: /opt/airflow/app
+      PROJECT_ROOT: /opt/airflow/app            # <-- used by your DAG to resolve ./data on host
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
@@ -36,6 +38,7 @@ services:
                 pip install --no-cache-dir -r requirements-docker.txt || true &&
                 airflow db migrate &&
                 airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true"
+    restart: "no"
 
   webserver:
     image: apache/airflow:2.9.3-python3.12
@@ -52,6 +55,7 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
+      PROJECT_ROOT: /opt/airflow/app            # <-- ensures outputs land in ./data on host
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
@@ -60,9 +64,10 @@ services:
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
                 pip install --no-cache-dir -r requirements-docker.txt || true &&
-                airflow webserver --port 8080"
+                airflow webserver --port ${AIRFLOW_WEB_PORT:-8080}"
     ports:
-      - "8080:8080"
+      - "${AIRFLOW_WEB_PORT:-8080}:8080"
+    restart: unless-stopped
 
   scheduler:
     image: apache/airflow:2.9.3-python3.12
@@ -79,6 +84,7 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
+      PROJECT_ROOT: /opt/airflow/app            # <-- ensures outputs land in ./data on host
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
@@ -88,6 +94,7 @@ services:
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
                 pip install --no-cache-dir -r requirements-docker.txt || true &&
                 airflow scheduler"
+    restart: unless-stopped
 
 volumes:
   pgdata:
