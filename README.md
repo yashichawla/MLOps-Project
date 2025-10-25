@@ -96,7 +96,7 @@ cd MLOps-Project
 - Week 7-8: Dashboards, monitoring, failure analysis.
 - Week 9-10: CI/CD gates, final validation, and reporting.
 
-### First time setup w Airflow
+### First time setup w Airflow if running without Docker
 
 ```bash
 chmod +x setup_airflow.sh start_airflow.sh stop_airflow.sh

@@ -1,0 +1,8 @@
+# Container-friendly pins (compatible with Airflow providers)
+numpy==1.26.4
+pandas==2.1.4
+datasets>=2.19.0
+fsspec==2023.12.2
+pyarrow>=16.0.0
+tqdm>=4.66.0
+# tests are not needed inside the runtime image, omit pytest here
