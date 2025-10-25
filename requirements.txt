@@ -1,1 +1,17 @@
- 
+# Core dependencies
+numpy<2.0         # Avoid NumPy 2.x compatibility issues
+scipy==1.11.2     # Compatible with NumPy 1.x
+pandas==2.1.1     # Stable with NumPy 1.x
+
+# HuggingFace datasets
+datasets==2.16.1  # For load_dataset
+# Optional but recommended for later Airflow DAG use
+apache-airflow>=2.9.0
+
+# Utility libraries
+numpy==1.26.0
+tqdm>=4.66.0
+pyarrow>=16.0.0
+
+# Testing
+pytest>=8.0.0
