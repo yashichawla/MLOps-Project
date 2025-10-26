@@ -2,207 +2,114 @@
 """
 SALAD preprocessing DAG
 
-Runs a multi-step, file-based preprocessing pipeline:
-  1) ensure_dirs  – create tmp/output folders
-  2) t_load       – load HF SALAD split -> write 00_raw.parquet
-  3) t_remove_duplicates -> 01_dedup.parquet
-  4) t_map_categories   -> 02_mapped.parquet
-  5) t_drop_cols        -> 03_dropcols.parquet
-  6) t_clean_nulls      -> 04_clean.parquet + data/processed/salad_cleaned.csv
-
-Outputs:
-  - TMP parquet steps under data/tmp/salad/
-  - Final CSV under data/processed/salad_cleaned.csv
-
-Notes:
-  - Airflow captures Python logging; check each task’s “Log” in the UI.
-  - Requires: datasets, pandas, pyarrow (for parquet).
+New pipeline uses scripts/preprocess_salad_data.run_preprocessing() which:
+  - loads multiple sources via config/config.json
+  - cleans, maps categories, adds metadata
+  - writes: data/processed/processed_data.csv
 """
 
 from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import os
+import json
 import logging
-import pandas as pd
 from airflow.decorators import dag, task, setup
+from airflow.exceptions import AirflowFailException
+from scripts.preprocess_salad import run_preprocessing
 
-from scripts.preprocess_salad import (
-    load_salad_dataset,
-    remove_duplicates,
-    map_categories,
-    drop_unnecessary_columns,
-    clean_null_values,
-)
-
-# Use a module-level logger; Airflow will route this to task logs.
 logger = logging.getLogger(__name__)
 
-
+# repo layout
 REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1]))
-DATA_DIR = REPO_ROOT / "data"
-TMP_DIR = DATA_DIR / "tmp" / "salad"
-OUT_DIR = DATA_DIR / "processed"
+DATA_DIR  = REPO_ROOT / "data"
+OUT_DIR   = DATA_DIR / "processed"
+CFG_DIR   = REPO_ROOT / "config"
 
+# allow override via env/Variables if you want
+CONFIG_PATH = Path(os.environ.get("SALAD_CONFIG_PATH", CFG_DIR / "data_sources.json"))
+OUTPUT_PATH = Path(os.environ.get("SALAD_OUTPUT_PATH", OUT_DIR / "processed_data.csv"))
+
+DEFAULT_CONFIG = {
+    "data_sources": [
+        {
+            "type": "hf",
+            "name": "OpenSafetyLab/Salad-Data",
+            "config": "attack_enhanced_set",
+            "split": "train"
+        }
+        # add more sources here (csv/json) via config
+    ]
+}
 
 @dag(
-    dag_id="salad_preprocess_multistep",
-    description="Multi-step SALAD preprocessing pipeline (file-based, parquet between steps).",
+    dag_id="salad_preprocess_v1",
+    description="Unified preprocessing for Salad-Data + other sources via config.",
     start_date=datetime(2025, 1, 1),
-    schedule=None,  # set a cron later if you want (e.g., "0 3 * * *")
+    schedule=None,          # set cron later if needed
     catchup=False,
     default_args={
         "retries": 1,
         "retry_delay": timedelta(minutes=5),
         "owner": "airflow",
     },
-    tags=["salad", "preprocessing", "mlops"],
+    tags=["salad", "preprocessing", "v1", "mlops"],
 )
-def salad_preprocess_multistep():
-    """Define the SALAD multi-step preprocessing DAG."""
+def salad_preprocess_v1():
 
     @setup
     @task
-    def ensure_dirs() -> None:
-        """Create the tmp/output directories if they don't exist."""
-        TMP_DIR.mkdir(parents=True, exist_ok=True)
+    def ensure_dirs() -> dict:
+        """Make sure data/, data/processed/, config/ exist."""
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         OUT_DIR.mkdir(parents=True, exist_ok=True)
-        logger.info(
-            "Ensured directories:\n  TMP_DIR=%s\n  OUT_DIR=%s", TMP_DIR, OUT_DIR
-        )
+        CFG_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info("Dirs ensured: DATA_DIR=%s OUT_DIR=%s CFG_DIR=%s", DATA_DIR, OUT_DIR, CFG_DIR)
+        return {"config_path": str(CONFIG_PATH), "output_path": str(OUTPUT_PATH)}
 
     @task
-    def t_load() -> str:
+    def ensure_config(paths: dict) -> str:
         """
-        Load the HF SALAD split and persist the raw dataframe to parquet.
-
-        Returns
-        -------
-        str
-            Path to 00_raw.parquet
+        Create a minimal config if none exists.
+        Returns absolute path to the config file to use.
         """
-        logger.info("Loading SALAD dataset from Hugging Face…")
-        df = load_salad_dataset()
-        logger.info("Loaded dataframe shape: %s", df.shape)
+        cfg_path = Path(paths["config_path"])
+        if not cfg_path.exists():
+            with open(cfg_path, "w") as f:
+                json.dump(DEFAULT_CONFIG, f, indent=2)
+            logger.info("Created default config at %s", cfg_path)
+        else:
+            logger.info("Using existing config at %s", cfg_path)
 
-        out_path = TMP_DIR / "00_raw.parquet"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(out_path, index=False)
-        logger.info("Wrote raw parquet: %s", out_path)
-        return str(out_path)
+        # quick sanity check
+        try:
+            with open(cfg_path, "r") as f:
+                cfg = json.load(f)
+            if "data_sources" not in cfg or not isinstance(cfg["data_sources"], list) or len(cfg["data_sources"]) == 0:
+                raise AirflowFailException("Config invalid: 'data_sources' is missing or empty.")
+        except Exception as e:
+            raise AirflowFailException(f"Failed to read/validate config: {e}")
+
+        return str(cfg_path)
 
     @task
-    def t_remove_duplicates(in_path: str) -> str:
+    def run_preprocess_task(cfg_path: str) -> str:
         """
-        Drop duplicate (baseq, augq) rows.
-
-        Parameters
-        ----------
-        in_path : str
-            Path to input parquet from previous step.
-
-        Returns
-        -------
-        str
-            Path to 01_dedup.parquet
+        Call the new preprocessing entrypoint. Writes a single CSV.
+        Returns the output file path.
         """
-        logger.info("Reading raw parquet: %s", in_path)
-        df = pd.read_parquet(in_path)
-        before = df.shape
-        df = remove_duplicates(df)
-        after = df.shape
-        logger.info("Deduplicated: %s -> %s", before, after)
+        out_path = str(OUTPUT_PATH)
+        logger.info("Running preprocessing with config=%s -> %s", cfg_path, out_path)
+        run_preprocessing(config_path=cfg_path, save_path=out_path)
 
-        out_path = TMP_DIR / "01_dedup.parquet"
-        df.to_parquet(out_path, index=False)
-        logger.info("Wrote dedup parquet: %s", out_path)
-        return str(out_path)
+        if not Path(out_path).exists() or Path(out_path).stat().st_size == 0:
+            raise AirflowFailException(f"Expected output not found or empty: {out_path}")
 
-    @task
-    def t_map_categories(in_path: str) -> str:
-        """
-        Map raw category labels to standardized categories.
+        logger.info("Preprocessing complete. Output at %s", out_path)
+        return out_path
 
-        Returns
-        -------
-        str
-            Path to 02_mapped.parquet
-        """
-        logger.info("Reading dedup parquet: %s", in_path)
-        df = pd.read_parquet(in_path)
-        df = map_categories(df)
-        logger.info(
-            "Category mapping complete. Unique std_category: %s",
-            df["std_category"].nunique(),
-        )
+    paths = ensure_dirs()
+    cfg   = ensure_config(paths)
+    final = run_preprocess_task(cfg)
 
-        out_path = TMP_DIR / "02_mapped.parquet"
-        df.to_parquet(out_path, index=False)
-        logger.info("Wrote mapped parquet: %s", out_path)
-        return str(out_path)
-
-    @task
-    def t_drop_cols(in_path: str) -> str:
-        """
-        Drop unnecessary columns.
-
-        Returns
-        -------
-        str
-            Path to 03_dropcols.parquet
-        """
-        logger.info("Reading mapped parquet: %s", in_path)
-        df = pd.read_parquet(in_path)
-        before_cols = list(df.columns)
-        df = drop_unnecessary_columns(df)
-        after_cols = list(df.columns)
-        logger.info(
-            "Dropped columns. Before: %d, After: %d", len(before_cols), len(after_cols)
-        )
-        logger.debug("Remaining columns: %s", after_cols)
-
-        out_path = TMP_DIR / "03_dropcols.parquet"
-        df.to_parquet(out_path, index=False)
-        logger.info("Wrote dropcols parquet: %s", out_path)
-        return str(out_path)
-
-    @task
-    def t_clean_nulls(in_path: str) -> str:
-        """
-        Remove null/empty question rows, write final parquet and CSV.
-
-        Returns
-        -------
-        str
-            Path to final CSV at data/processed/salad_cleaned.csv
-        """
-        logger.info("Reading dropcols parquet: %s", in_path)
-        df = pd.read_parquet(in_path)
-        before = len(df)
-        df = clean_null_values(df)
-        after = len(df)
-        logger.info("Cleaned nulls/empties: %d -> %d rows", before, after)
-
-        final_parquet = TMP_DIR / "04_clean.parquet"
-        final_parquet.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(final_parquet, index=False)
-        logger.info("Wrote final parquet: %s", final_parquet)
-
-        final_csv = OUT_DIR / "salad_cleaned.csv"
-        final_csv.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(final_csv, index=False)
-        logger.info("Wrote final CSV: %s (rows=%d, cols=%d)", final_csv, *df.shape)
-        return str(final_csv)
-
-    # Dependencies: setup → linear chain of tasks
-    s = ensure_dirs()
-    p0 = t_load()
-    p1 = t_remove_duplicates(p0)
-    p2 = t_map_categories(p1)
-    p3 = t_drop_cols(p2)
-    s >> p0  # ensure directories before first step
-    _ = t_clean_nulls(p3)
-
-
-# DAG object for the scheduler
-dag = salad_preprocess_multistep()
+dag = salad_preprocess_v1()
