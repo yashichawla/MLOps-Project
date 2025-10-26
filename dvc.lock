@@ -1,0 +1,19 @@
+schema: '2.0'
+stages:
+  salad_preprocess:
+    cmd: "python -c \"import os; os.makedirs('data/processed', exist_ok=True)\" &&
+      python scripts/preprocess_salad.py\n"
+    deps:
+    - path: config/data_sources.json
+      hash: md5
+      md5: f9088691602e8692e265d0ee0dfbf79c
+      size: 174
+    - path: scripts/preprocess_salad.py
+      hash: md5
+      md5: d01575dd7b6b1e872eff98a30c825e19
+      size: 9459
+    outs:
+    - path: data/processed/processed_data.csv
+      hash: md5
+      md5: 123c5fe5f4b0b60afe4a6a11f0798343
+      size: 13295022
