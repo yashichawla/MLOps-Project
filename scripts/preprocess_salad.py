@@ -1,39 +1,128 @@
 # preprocess_salad_data.py
 
 """
-Data Preprocessing Module for SALAD Dataset
+Preprocessing pipeline for Salad-Data and other safety datasets.
 
-This script performs modular preprocessing on the SALAD dataset:
-- Loads dataset from Hugging Face
-- Converts to DataFrame
-- Drops unnecessary columns and duplicates
-- Maps raw categories to 13 standardized evaluation categories
-- Removes null or invalid entries
+This script:
+1. Loads datasets from one or more sources (defined in config).
+2. Validates and standardizes data format.
+3. Cleans missing or empty prompts.
+4. Normalizes scenario categories.
+5. Combines all processed data into one unified DataFrame.
 
-Each step is encapsulated in a function for integration into an Airflow pipeline.
+Final output columns:
+    prompt | category | prompt_id | text_length | size_label
+
+To be integrated later with Airflow for automated execution.
 """
+
 
 from datasets import load_dataset
 import pandas as pd
+import json
+import os
+import uuid
+
+# --------------------------
+# CONFIG LOADING
+# --------------------------
+
+def load_config(config_path: str):
+    """Load data source configuration file (JSON/YAML)."""
+    print(f"Loading config from {config_path}...")
+    if config_path.endswith(".json"):
+        with open(config_path, "r") as f:
+            return json.load(f)
+    else:
+        raise ValueError("Only JSON config supported for now.")
 
 
-def load_salad_dataset():
-    """Load the attack_enhanced_set split from the SALAD dataset."""
-    print("Loading SALAD dataset...")
-    dataset = load_dataset("OpenSafetyLab/Salad-Data", "attack_enhanced_set", split="train")
-    return pd.DataFrame(dataset)
+# --------------------------
+# DATA LOADING
+# --------------------------
+
+def load_dataset_from_hf(source):
+    """Load Hugging Face dataset (e.g., Salad)."""
+    print(f" Loading HF dataset: {source['name']} ({source['config']})...")
+    ds = load_dataset(source["name"], source["config"], split=source["split"])
+    df = ds.to_pandas()
+    return df
 
 
-def drop_unnecessary_columns(df):
-    """Drop irrelevant columns."""
-    print("Dropping unnecessary columns...")
-    return df.drop(columns=["1-category", "2-category","3-category","method", "aid", "qid"], errors="ignore")
+def load_dataset_from_csv(source):
+    """Load CSV dataset."""
+    print(f" Loading CSV: {source['path']}...")
+    return pd.read_csv(source["path"])
+
+
+def load_dataset_from_json(source):
+    """Load JSON dataset."""
+    print(f" Loading JSON: {source['path']}...")
+    return pd.read_json(source["path"])
+
+
+def load_datasets(config):
+    """Load and combine all datasets listed in config."""
+    combined_data = []
+
+    for source in config.get("data_sources", []):
+        src_type = source.get("type", "hf")
+        try:
+            if src_type == "hf":
+                df = load_dataset_from_hf(source)
+            elif src_type == "csv":
+                df = load_dataset_from_csv(source)
+            elif src_type == "json":
+                df = load_dataset_from_json(source)
+            else:
+                print(f" Unsupported data type '{src_type}', skipping.")
+                continue
+        except Exception as e:
+            print(f"Failed to load {source}: {e}")
+            continue
+
+        # Handle Salad Data separately
+        if source.get("name") == "OpenSafetyLab/Salad-Data":
+            if "augq" in df.columns and "3-category" in df.columns:
+                df = df.rename(columns={"augq": "prompt"})
+                df = df.rename(columns={"3-category": "category"})
+                df = df[["prompt", "category"]]
+            else:
+                print("Salad dataset missing expected columns 'augq' or 'category'. Skipping.")
+                continue
+
+        # Handle other datasets — keep only 'prompts'
+        else:
+            if "prompts" in df.columns:
+                df = df.rename(columns={"prompts": "prompt"})
+                df["category"] = "Unknown"
+            else:
+                print(f"'prompts' column not found in {source.get('path', source.get('name'))}. Skipping.")
+                continue
+
+        combined_data.append(df)
+
+    if not combined_data:
+        raise ValueError("No valid datasets loaded.")
+
+    df_combined = pd.concat(combined_data, ignore_index=True)
+    print(f" Combined {len(combined_data)} datasets, total {len(df_combined)} rows.")
+    return df_combined
+
+def clean_null_values(df):
+    """Remove rows with null/empty prompts."""
+    before = len(df)
+    df = df.dropna(subset=["prompt"])
+    df = df[df["prompt"].str.strip() != ""]
+    after = len(df)
+    print(f"Removed {before - after} empty prompts.")
+    return df
 
 
 def remove_duplicates(df):
     """Remove duplicate baseq-augq pairs."""
     print("Removing duplicates...")
-    df = df.drop_duplicates(subset=["baseq", "augq"], keep="first").reset_index(drop=True)
+    df = df.drop_duplicates(subset=["prompt"], keep="first").reset_index(drop=True)
     print(f"Dataset after deduplication: {len(df)} rows")
     return df
 
@@ -42,7 +131,7 @@ def map_categories(df):
     """Map raw 3-category labels to 13 standardized categories."""
     print("Mapping categories...")
 
-    category_mapping = {
+    category_map = {
     
     # Illegal Activity
     'O19: Illegal Drugs and Regulated/Controlled Substances': 'Illegal Activity',
@@ -112,32 +201,77 @@ def map_categories(df):
     'O27: Labor Issues': 'Economic Harm',
 
     }
+  
+    if "category" in df.columns:
+        df["category"] = df["category"].map(category_map).fillna("Unknown")
+    else:
+        df["category"] = "Unknown"
+    return df
 
-    df["std_category"] = df["3-category"].map(category_mapping).fillna("Other")
+def add_metadata(df):
+    """Add prompt_id, text_length, and size_label columns."""
+    print(" Adding metadata columns...")
+
+    df["prompt_id"] = [str(uuid.uuid4())[:8] for _ in range(len(df))]
+    df["text_length"] = df["prompt"].apply(lambda x: len(str(x).split()))
+
+    def size_label(n):
+        if n < 50:
+            return "S"
+        elif n <= 200:
+            return "M"
+        else:
+            return "L"
+
+    df["size_label"] = df["text_length"].apply(size_label)
     return df
 
 
-def clean_null_values(df):
-    """Remove rows with null or empty questions."""
-    print("Removing null/empty text fields...")
-    df = df.dropna(subset=["baseq", "augq"])
-    df = df[df["baseq"].str.strip() != ""]
-    return df
+# --------------------------
+# MAIN PIPELINE
+# --------------------------
 
+def run_preprocessing(config_path: str, save_path: str = "data/processed/processed_data.csv"):
+    """Run full preprocessing flow."""
+    os.makedirs("data", exist_ok=True)
 
-def preprocess_salad_data():
-    """Full preprocessing pipeline — ready for Airflow task."""
-    df = load_salad_dataset()
-    df = remove_duplicates(df)
-    df = map_categories(df)
-    df = drop_unnecessary_columns(df)
+    config = load_config(config_path)
+    df = load_datasets(config)
     df = clean_null_values(df)
-    print("Preprocessing completed successfully!")
-    print(f"Final dataset shape: {df.shape}")
-    return df
+    df = map_categories(df)
+    df = add_metadata(df)
 
+    df = df[["prompt", "category", "prompt_id", "text_length", "size_label"]]
+    df.to_csv(save_path, index=False)
+
+    print(f"Preprocessing complete — saved {len(df)} records to {save_path}.")
+
+
+# --------------------------
+# ENTRY POINT
+# --------------------------
 
 if __name__ == "__main__":
-    final_df = preprocess_salad_data()
-    final_df.to_csv("data/processed/salad_cleaned.csv", index=False)
-    print("Processed dataset saved as salad_cleaned.csv")
+    CONFIG_PATH = "config/data_sources.json"
+    os.makedirs("config", exist_ok=True)
+
+    if not os.path.exists(CONFIG_PATH):
+        example_config = {
+            "data_sources": [
+                {
+                    "type": "hf",
+                    "name": "OpenSafetyLab/Salad-Data",
+                    "config": "attack_enhanced_set",
+                    "split": "train"
+                },
+                {
+                    "type": "csv",
+                    "path": "data/local_dataset.csv"
+                }
+            ]
+        }
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(example_config, f, indent=2)
+        print(" Example config file created at config/data_sources.json")
+
+    run_preprocessing(CONFIG_PATH)
