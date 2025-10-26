@@ -31,6 +31,7 @@ airflow_artifacts/
 data/tmp/
 !data/.gitkeep
 !data/**/.gitkeep
+data/validation_reports/
 
 # Editors/OS
 .vscode/

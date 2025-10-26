@@ -60,6 +60,15 @@ services:
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
+      # --- SMTP (Gmail) for EmailOperator (read from .env) ---
+      AIRFLOW__EMAIL__EMAIL_BACKEND: airflow.utils.email.send_email_smtp
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_PORT: "587"
+      AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+      AIRFLOW__SMTP__SMTP_SSL: "False"
+      AIRFLOW__SMTP__SMTP_USER: ${AIRFLOW_SMTP_USER}
+      AIRFLOW__SMTP__SMTP_PASSWORD: ${AIRFLOW_SMTP_PASSWORD}
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: ${AIRFLOW_SMTP_USER}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
@@ -91,6 +100,15 @@ services:
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
+      # --- SMTP for task/EmailOperator sends (LocalExecutor runs tasks here) ---
+      AIRFLOW__EMAIL__EMAIL_BACKEND: airflow.utils.email.send_email_smtp
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_PORT: "587"
+      AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+      AIRFLOW__SMTP__SMTP_SSL: "False"
+      AIRFLOW__SMTP__SMTP_USER: ${AIRFLOW_SMTP_USER}
+      AIRFLOW__SMTP__SMTP_PASSWORD: ${AIRFLOW_SMTP_PASSWORD}
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: ${AIRFLOW_SMTP_USER}
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
