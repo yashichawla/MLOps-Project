@@ -1,0 +1,5 @@
+# Ignore intermediates and runtime junk from DVC's perspective
+data/tmp/
+logs/
+.airflow/
+.secrets/
