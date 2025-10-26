@@ -27,7 +27,9 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
-      PROJECT_ROOT: /opt/airflow/app            # <-- used by your DAG to resolve ./data on host
+      PROJECT_ROOT: /opt/airflow/app
+      SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
+      SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
@@ -55,7 +57,9 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
-      PROJECT_ROOT: /opt/airflow/app            # <-- ensures outputs land in ./data on host
+      PROJECT_ROOT: /opt/airflow/app
+      SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
+      SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
@@ -84,7 +88,9 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
-      PROJECT_ROOT: /opt/airflow/app            # <-- ensures outputs land in ./data on host
+      PROJECT_ROOT: /opt/airflow/app
+      SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
+      SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
