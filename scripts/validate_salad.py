@@ -50,7 +50,7 @@ def validate_output_csv(
     """
     # Normalize report_dirs to a list
     if isinstance(report_dirs, (str, Path)):
-        report_dirs = [report_dirs]  
+        report_dirs = [report_dirs]
     report_dirs = [Path(d) for d in report_dirs]
 
     p = Path(csv_path)
@@ -74,7 +74,7 @@ def validate_output_csv(
         "text_len_max": None,
         "size_label_mismatch_count": 0,
         "csv_path": str(p),
-        "report_paths": [], 
+        "report_paths": [],
         "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
 
@@ -94,7 +94,9 @@ def validate_output_csv(
         logger.error("Row count too low: %d (min required: %d)", len(df), DQ_MIN_ROWS)
 
     # Null/empty prompt
-    null_prompts = df["prompt"].isna().sum() + (df["prompt"].astype(str).str.strip() == "").sum()
+    null_prompts = (
+        df["prompt"].isna().sum() + (df["prompt"].astype(str).str.strip() == "").sum()
+    )
     metrics["null_prompt_count"] = int(null_prompts)
     if null_prompts > 0:
         metrics["hard_fail"] = True
@@ -123,7 +125,8 @@ def validate_output_csv(
             metrics["soft_warn"] = True
             logger.warning(
                 "Unknown category rate high: %.2f (threshold=%.2f)",
-                unknown_rate, DQ_MAX_UNKNOWN_RATE
+                unknown_rate,
+                DQ_MAX_UNKNOWN_RATE,
             )
 
     # text_length sanity + size_label check
@@ -135,7 +138,8 @@ def validate_output_csv(
             metrics["soft_warn"] = True
             logger.warning(
                 "Max text_length high: %d (threshold=%d)",
-                metrics["text_len_max"], DQ_MAX_TEXT_LEN
+                metrics["text_len_max"],
+                DQ_MAX_TEXT_LEN,
             )
         sizes = df["size_label"].astype(str)
         predicted = tl.apply(_size_ok)
@@ -153,13 +157,23 @@ def validate_output_csv(
     metrics["report_paths"] = [str(r) for r in report_paths]
 
     # Final summary line for quick scanning in Airflow logs
-    level = logging.ERROR if metrics["hard_fail"] else (logging.WARNING if metrics["soft_warn"] else logging.INFO)
+    level = (
+        logging.ERROR
+        if metrics["hard_fail"]
+        else (logging.WARNING if metrics["soft_warn"] else logging.INFO)
+    )
     logger.log(
         level,
         "Validation summary | rows=%d nulls=%d dups=%d unknown_rate=%.3f text_len=[%s,%s] mismatches=%d hard_fail=%s soft_warn=%s",
-        metrics["row_count"], metrics["null_prompt_count"], metrics["dup_prompt_count"],
-        metrics["unknown_category_rate"], metrics["text_len_min"], metrics["text_len_max"],
-        metrics["size_label_mismatch_count"], metrics["hard_fail"], metrics["soft_warn"]
+        metrics["row_count"],
+        metrics["null_prompt_count"],
+        metrics["dup_prompt_count"],
+        metrics["unknown_category_rate"],
+        metrics["text_len_min"],
+        metrics["text_len_max"],
+        metrics["size_label_mismatch_count"],
+        metrics["hard_fail"],
+        metrics["soft_warn"],
     )
 
     return metrics

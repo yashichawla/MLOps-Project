@@ -27,6 +27,7 @@ import uuid
 # CONFIG LOADING
 # --------------------------
 
+
 def load_config(config_path: str):
     """Load data source configuration file (JSON/YAML)."""
     print(f"Loading config from {config_path}...")
@@ -40,6 +41,7 @@ def load_config(config_path: str):
 # --------------------------
 # DATA LOADING
 # --------------------------
+
 
 def load_dataset_from_hf(source):
     """Load Hugging Face dataset (e.g., Salad)."""
@@ -88,7 +90,9 @@ def load_datasets(config):
                 df = df.rename(columns={"3-category": "category"})
                 df = df[["prompt", "category"]]
             else:
-                print("Salad dataset missing expected columns 'augq' or 'category'. Skipping.")
+                print(
+                    "Salad dataset missing expected columns 'augq' or 'category'. Skipping."
+                )
                 continue
 
         # Handle other datasets — keep only 'prompts'
@@ -97,7 +101,9 @@ def load_datasets(config):
                 df = df.rename(columns={"prompts": "prompt"})
                 df["category"] = "Unknown"
             else:
-                print(f"'prompts' column not found in {source.get('path', source.get('name'))}. Skipping.")
+                print(
+                    f"'prompts' column not found in {source.get('path', source.get('name'))}. Skipping."
+                )
                 continue
 
         combined_data.append(df)
@@ -108,6 +114,7 @@ def load_datasets(config):
     df_combined = pd.concat(combined_data, ignore_index=True)
     print(f" Combined {len(combined_data)} datasets, total {len(df_combined)} rows.")
     return df_combined
+
 
 def clean_null_values(df):
     """Remove rows with null/empty prompts."""
@@ -132,81 +139,75 @@ def map_categories(df):
     print("Mapping categories...")
 
     category_map = {
-    
-    # Illegal Activity
-    'O19: Illegal Drugs and Regulated/Controlled Substances': 'Illegal Activity',
-    'O54: Drug-related Crimes': 'Illegal Activity',
-    'O42: Scams': 'Illegal Activity',
-    'O37: Malware Generation': 'Malware Generation',
-    'O35: Weapon Generation and Transportation': 'Illegal Activity',
-    'O56: Violent Crimes': 'Physical Harm',
-    'O60: Traffic and Driving Offenses': 'Illegal Activity',
-    'O59: Environmental Crimes': 'Illegal Activity',
-    'O43: Financial Fraud': 'Fraud',
-    'O65: Plagiarism': 'Fraud',
-    'O45: Fake Review Generation': 'Fraud',
-    'O50: Manipulation of Public Opinion': 'Political Lobbying',
-    'O51: Campaign Materials': 'Political Lobbying',
-    'O31: Government Secrets': 'Government Decision',
-    'O33: Inferring Personal Information': 'Privacy Violence',
-    'O34: Leaking Private Information': 'Privacy Violence',
-    'O48: Spam': 'Economic Harm',
-    'O25: Paypal Lending': 'Economic Harm',
-    
-    # Hate Speech
-    'O1: Hate Speech': 'Hate Speech',
-    'O7: Insult': 'Hate Speech',
-    'O8: Racial and Ethnic Stereotyping': 'Hate Speech',
-    'O10: Disability Stereotyping': 'Hate Speech',
-    'O9: Age Stereotyping': 'Hate Speech',
-    'O11: Gender Stereotyping': 'Hate Speech',
-    'O12: Religious Stereotyping': 'Hate Speech',
-    
-    # Sexual / Child Abuse
-    'O6: Child Abuse': 'Child Sexual Abuse',
-    'O15: Sexual Activity': 'Pornography',
-    'O16: Pornography': 'Pornography',
-    'O14: Erotic Chat': 'Pornography',
-    'O55: Sexual Offenses': 'Pornography',
-    
-    # Health / Legal / Financial Advice
-    'O17: Law Advice': 'Legal Opinion',
-    'O58: Illegal Law Advice': 'Legal Opinion',
-    'O20: Medical Advice': 'Health Consultation',
-    'O53: Financial Crimes': 'Financial Advice',
-    
-    # Physical / Psychological Harm
-    "O3: Enjoying someone else's Pain": 'Physical Harm',
-    'O2: Harass, Threaten, or Bully An Individual': 'Physical Harm',
-    'O39: Biological and Chemical Harms': 'Physical Harm',
-    'O63: Psychological Manipulation': 'Physical Harm',
-    'O38: Cyber Attack': 'Physical Harm',
-    
-    # Other
-    'O21: Historical Revisionism': 'Political Lobbying',
-    'O22: Science Denialism': 'Political Lobbying',
-    'O23: Radicalization': 'Political Lobbying',
-    'O30: Social Media Rumors': 'Political Lobbying',
-    'O24: Multi-level Marketing': 'Economic Harm',
-    'O26: Gambling': 'Economic Harm',
-    'O40: Group Defamation': 'Hate Speech',
-    'O41: Defamation Someone': 'Hate Speech',
-    'O46: Fake Online Content': 'Political Lobbying',
-    'O29: Fake News': 'Political Lobbying',
-    'O47: Disinformation': 'Political Lobbying',
-    'O32: Financial Data Leaks': 'Financial Advice',
-    'O62: Self-Harm': 'Physical Harm',
-    'O64: Mimicking Writing Style': 'Fraud',
-    'O28: Trade Affairs': 'Economic Harm',
-    'O27: Labor Issues': 'Economic Harm',
-
+        # Illegal Activity
+        "O19: Illegal Drugs and Regulated/Controlled Substances": "Illegal Activity",
+        "O54: Drug-related Crimes": "Illegal Activity",
+        "O42: Scams": "Illegal Activity",
+        "O37: Malware Generation": "Malware Generation",
+        "O35: Weapon Generation and Transportation": "Illegal Activity",
+        "O56: Violent Crimes": "Physical Harm",
+        "O60: Traffic and Driving Offenses": "Illegal Activity",
+        "O59: Environmental Crimes": "Illegal Activity",
+        "O43: Financial Fraud": "Fraud",
+        "O65: Plagiarism": "Fraud",
+        "O45: Fake Review Generation": "Fraud",
+        "O50: Manipulation of Public Opinion": "Political Lobbying",
+        "O51: Campaign Materials": "Political Lobbying",
+        "O31: Government Secrets": "Government Decision",
+        "O33: Inferring Personal Information": "Privacy Violence",
+        "O34: Leaking Private Information": "Privacy Violence",
+        "O48: Spam": "Economic Harm",
+        "O25: Paypal Lending": "Economic Harm",
+        # Hate Speech
+        "O1: Hate Speech": "Hate Speech",
+        "O7: Insult": "Hate Speech",
+        "O8: Racial and Ethnic Stereotyping": "Hate Speech",
+        "O10: Disability Stereotyping": "Hate Speech",
+        "O9: Age Stereotyping": "Hate Speech",
+        "O11: Gender Stereotyping": "Hate Speech",
+        "O12: Religious Stereotyping": "Hate Speech",
+        # Sexual / Child Abuse
+        "O6: Child Abuse": "Child Sexual Abuse",
+        "O15: Sexual Activity": "Pornography",
+        "O16: Pornography": "Pornography",
+        "O14: Erotic Chat": "Pornography",
+        "O55: Sexual Offenses": "Pornography",
+        # Health / Legal / Financial Advice
+        "O17: Law Advice": "Legal Opinion",
+        "O58: Illegal Law Advice": "Legal Opinion",
+        "O20: Medical Advice": "Health Consultation",
+        "O53: Financial Crimes": "Financial Advice",
+        # Physical / Psychological Harm
+        "O3: Enjoying someone else's Pain": "Physical Harm",
+        "O2: Harass, Threaten, or Bully An Individual": "Physical Harm",
+        "O39: Biological and Chemical Harms": "Physical Harm",
+        "O63: Psychological Manipulation": "Physical Harm",
+        "O38: Cyber Attack": "Physical Harm",
+        # Other
+        "O21: Historical Revisionism": "Political Lobbying",
+        "O22: Science Denialism": "Political Lobbying",
+        "O23: Radicalization": "Political Lobbying",
+        "O30: Social Media Rumors": "Political Lobbying",
+        "O24: Multi-level Marketing": "Economic Harm",
+        "O26: Gambling": "Economic Harm",
+        "O40: Group Defamation": "Hate Speech",
+        "O41: Defamation Someone": "Hate Speech",
+        "O46: Fake Online Content": "Political Lobbying",
+        "O29: Fake News": "Political Lobbying",
+        "O47: Disinformation": "Political Lobbying",
+        "O32: Financial Data Leaks": "Financial Advice",
+        "O62: Self-Harm": "Physical Harm",
+        "O64: Mimicking Writing Style": "Fraud",
+        "O28: Trade Affairs": "Economic Harm",
+        "O27: Labor Issues": "Economic Harm",
     }
-  
+
     if "category" in df.columns:
         df["category"] = df["category"].map(category_map).fillna("Unknown")
     else:
         df["category"] = "Unknown"
     return df
+
 
 def add_metadata(df):
     """Add prompt_id, text_length, and size_label columns."""
@@ -231,7 +232,10 @@ def add_metadata(df):
 # MAIN PIPELINE
 # --------------------------
 
-def run_preprocessing(config_path: str, save_path: str = "data/processed/processed_data.csv"):
+
+def run_preprocessing(
+    config_path: str, save_path: str = "data/processed/processed_data.csv"
+):
     """Run full preprocessing flow."""
     os.makedirs("data", exist_ok=True)
 
@@ -262,12 +266,9 @@ if __name__ == "__main__":
                     "type": "hf",
                     "name": "OpenSafetyLab/Salad-Data",
                     "config": "attack_enhanced_set",
-                    "split": "train"
+                    "split": "train",
                 },
-                {
-                    "type": "csv",
-                    "path": "data/local_dataset.csv"
-                }
+                {"type": "csv", "path": "data/local_dataset.csv"},
             ]
         }
         with open(CONFIG_PATH, "w") as f:
