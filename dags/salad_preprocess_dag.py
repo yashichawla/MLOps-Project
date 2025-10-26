@@ -30,17 +30,19 @@ logger = logging.getLogger(__name__)
 
 # repo layout
 REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1]))
-DATA_DIR  = REPO_ROOT / "data"
-OUT_DIR   = DATA_DIR / "processed"
-CFG_DIR   = REPO_ROOT / "config"
+DATA_DIR = REPO_ROOT / "data"
+OUT_DIR = DATA_DIR / "processed"
+CFG_DIR = REPO_ROOT / "config"
 
 # allow override via env/Variables if you want
 CONFIG_PATH = Path(os.environ.get("SALAD_CONFIG_PATH", CFG_DIR / "data_sources.json"))
 OUTPUT_PATH = Path(os.environ.get("SALAD_OUTPUT_PATH", OUT_DIR / "processed_data.csv"))
 
 # Airflow Variables (with defaults)
-TEST_MODE      = (Variable.get("TEST_MODE", default_var="false").lower() == "true")
-TEST_CSV_PATH  = Variable.get("TEST_CSV_PATH", default_var=str(DATA_DIR / "test_validation" / "test.csv"))
+TEST_MODE = Variable.get("TEST_MODE", default_var="false").lower() == "true"
+TEST_CSV_PATH = Variable.get(
+    "TEST_CSV_PATH", default_var=str(DATA_DIR / "test_validation" / "test.csv")
+)
 
 DEFAULT_CONFIG = {
     "data_sources": [
@@ -48,11 +50,12 @@ DEFAULT_CONFIG = {
             "type": "hf",
             "name": "OpenSafetyLab/Salad-Data",
             "config": "attack_enhanced_set",
-            "split": "train"
+            "split": "train",
         }
         # add more sources here (csv/json) via config
     ]
 }
+
 
 @dag(
     dag_id="salad_preprocess_v1",
@@ -80,7 +83,10 @@ def salad_preprocess_v1():
         CFG_DIR.mkdir(parents=True, exist_ok=True)
         logger.info(
             "Dirs ensured: DATA_DIR=%s OUT_DIR=%s CFG_DIR=%s TEST_DIR=%s",
-            DATA_DIR, OUT_DIR, CFG_DIR, DATA_DIR / "test_validation"
+            DATA_DIR,
+            OUT_DIR,
+            CFG_DIR,
+            DATA_DIR / "test_validation",
         )
         return {
             "config_path": str(CONFIG_PATH),
@@ -106,8 +112,14 @@ def salad_preprocess_v1():
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
-            if "data_sources" not in cfg or not isinstance(cfg["data_sources"], list) or len(cfg["data_sources"]) == 0:
-                raise AirflowFailException("Config invalid: 'data_sources' is missing or empty.")
+            if (
+                "data_sources" not in cfg
+                or not isinstance(cfg["data_sources"], list)
+                or len(cfg["data_sources"]) == 0
+            ):
+                raise AirflowFailException(
+                    "Config invalid: 'data_sources' is missing or empty."
+                )
         except Exception as e:
             raise AirflowFailException(f"Failed to read/validate config: {e}")
 
@@ -121,7 +133,10 @@ def salad_preprocess_v1():
         """
         cfg_path, out_path = paths_and_cfg
         if TEST_MODE:
-            logger.warning("TEST_MODE is ON — skipping preprocessing. Using test CSV: %s", TEST_CSV_PATH)
+            logger.warning(
+                "TEST_MODE is ON — skipping preprocessing. Using test CSV: %s",
+                TEST_CSV_PATH,
+            )
             # Ensure file exists (warn if not)
             test_p = Path(TEST_CSV_PATH)
             if not test_p.exists():
@@ -130,10 +145,16 @@ def salad_preprocess_v1():
             return str(test_p)
 
         # Normal run: preprocess
-        logger.info("TEST_MODE is OFF — running preprocessing with config=%s -> %s", cfg_path, out_path)
+        logger.info(
+            "TEST_MODE is OFF — running preprocessing with config=%s -> %s",
+            cfg_path,
+            out_path,
+        )
         run_preprocessing(config_path=cfg_path, save_path=out_path)
         if not Path(out_path).exists() or Path(out_path).stat().st_size == 0:
-            raise AirflowFailException(f"Expected output not found or empty: {out_path}")
+            raise AirflowFailException(
+                f"Expected output not found or empty: {out_path}"
+            )
         logger.info("Preprocessing complete. Output at %s", out_path)
         return out_path
 
@@ -147,11 +168,12 @@ def salad_preprocess_v1():
         # DO NOT raise here; always return metrics so downstream can report/alert
         return metrics
 
-
     @task(trigger_rule=TriggerRule.ALL_DONE)
     def report_validation_status(metrics: dict | None) -> None:
         if not metrics:
-            logger.error("Validation metrics missing (task likely errored). Check logs.")
+            logger.error(
+                "Validation metrics missing (task likely errored). Check logs."
+            )
             return
         if metrics.get("soft_warn"):
             logger.warning("Validation passed with warnings: %s", metrics)
@@ -162,12 +184,14 @@ def salad_preprocess_v1():
     def enforce_validation_policy(metrics: dict | None) -> None:
         if not metrics:
             # if validation crashed before producing metrics, fail cleanly
-            raise AirflowFailException("Validation metrics missing; validation may have crashed.")
+            raise AirflowFailException(
+                "Validation metrics missing; validation may have crashed."
+            )
         if metrics.get("hard_fail"):
             raise AirflowFailException(
                 f"Validation hard-failed. See reports: {metrics.get('report_paths')}"
             )
-        
+
     # 1) Always email the validation report (runs even if other tasks fail)
     email_validation_report = EmailOperator(
         task_id="email_validation_report",
@@ -241,13 +265,13 @@ def salad_preprocess_v1():
     )
 
     paths = ensure_dirs()
-    cfg   = ensure_config(paths)
+    cfg = ensure_config(paths)
 
     # Task instances (XComArg objects)
-    selected_csv      = select_input_csv((cfg, str(OUTPUT_PATH)))
-    validate_task     = validate_output(selected_csv)               # returns metrics dict
-    report_task       = report_validation_status(validate_task)     # logs
-    enforce_task      = enforce_validation_policy(validate_task)    # raises on hard_fail
+    selected_csv = select_input_csv((cfg, str(OUTPUT_PATH)))
+    validate_task = validate_output(selected_csv)  # returns metrics dict
+    report_task = report_validation_status(validate_task)  # logs
+    enforce_task = enforce_validation_policy(validate_task)  # raises on hard_fail
 
     # Email report should run regardless of success/failure
     report_task >> email_validation_report
