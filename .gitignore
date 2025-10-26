@@ -38,3 +38,16 @@ data/validation_reports/
 .idea/
 .DS_Store
 Thumbs.db
+
+# DVC-managed artifacts and caches
+/data/processed/*
+!/data/processed/*.dvc
+
+# Local secrets
+.secrets/
+
+# Keep config JSONs tracked
+!config/*.json
+
+# (Optional) still ignore random JSONs at repo root only
+/*.json

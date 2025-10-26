@@ -1,0 +1,10 @@
+stages:
+  salad_preprocess:
+    cmd: >
+      python -c "import os; os.makedirs('data/processed', exist_ok=True)"
+      && python scripts/preprocess_salad.py
+    deps:
+      - scripts/preprocess_salad.py
+      - config/data_sources.json
+    outs:
+      - data/processed/processed_data.csv
