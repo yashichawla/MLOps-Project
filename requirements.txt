@@ -4,7 +4,8 @@ scipy==1.11.2          # Compatible with NumPy 1.26
 pandas==2.1.1          # Stable with NumPy 1.x
 
 # HuggingFace datasets
-datasets==2.16.1       # For load_dataset()
+datasets==2.16.1
+fsspec==2023.10.0
 
 # Utility libraries
 tqdm>=4.66.0           # Progress bars
@@ -15,5 +16,8 @@ pytest>=8.0.0
 
 #dvc
 dvc[gcs]>=3.0.0
-gcsfs>=2024.2.0
+gcsfs==2023.10.0
 dvc-gs>=3.0.0
+
+# Data validation alternative
+great_expectations>=0.18
