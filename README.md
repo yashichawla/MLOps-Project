@@ -308,4 +308,3 @@ This document was created specifically for the Data Pipeline assignment submissi
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
-
