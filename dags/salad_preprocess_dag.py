@@ -2,11 +2,12 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
+import os, subprocess
 import json
 import logging
- 
+
 from airflow.decorators import dag, task, setup
+from airflow.operators.python import get_current_context
 from airflow.exceptions import AirflowFailException
 from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
@@ -16,8 +17,8 @@ from airflow.operators.email import EmailOperator
 from airflow.operators.bash import BashOperator
  
 from scripts.preprocess_salad import run_preprocessing
-from scripts.validate_salad import validate_output_csv
- 
+from scripts.validator import run_validation
+
 logger = logging.getLogger(__name__)
  
 # repo layout
@@ -186,11 +187,40 @@ def salad_preprocess_v1():
  
     @task
     def validate_output(out_csv_path: str) -> dict:
-        report_dirs = [
-            REPO_ROOT / "airflow_artifacts" / "reports",
-            REPO_ROOT / "data" / "validation_reports",
-        ]
-        metrics = validate_output_csv(out_csv_path, report_dirs)
+        """
+        Single source of truth:
+        1) Run pandas validator -> returns metrics dict for emails/gating.
+        2) Sidecar: run GE baseline (if missing) and GE validate to emit extra artifacts.
+            GE outputs never gate the DAG; failures are logged but ignored here.
+        """
+
+        # 1) Run pandas validation (this drives emails + gating)
+        allowed_env = os.getenv("ALLOWED_CATEGORIES")
+        allowed_categories = [c.strip() for c in allowed_env.split(",")] if allowed_env else None
+        ds_nodash = get_current_context()["ds_nodash"]
+        metrics = run_validation(
+            input_csv=out_csv_path,
+            metrics_root=str(METRICS_DIR),   # keep your existing METRICS_DIR
+            date_str=ds_nodash,
+            allowed_categories=allowed_categories,
+        )
+
+        # 2) Sidecar GE artifacts (optional, non-blocking)
+        try:
+            if not BASELINE_SCHEMA.exists():
+                subprocess.run(
+                    ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
+                    check=False,
+                )
+            subprocess.run(
+                ["python", str(SCRIPT_GE), "validate", "--input", out_csv_path,
+                "--baseline_schema", str(BASELINE_SCHEMA), "--date", ds_nodash],
+                check=False,
+            )
+        except Exception as e:
+            logger.warning("GE sidecar failed (non-blocking): %s", e)
+
+        # Always return metrics for downstream report/enforce/email
         return metrics
  
     @task(trigger_rule=TriggerRule.ALL_DONE)
@@ -198,18 +228,26 @@ def salad_preprocess_v1():
         if not metrics:
             logger.error("Validation metrics missing (task likely errored). Check logs.")
             return
-        if metrics.get("soft_warn"):
-            logger.warning("Validation passed with warnings: %s", metrics)
+        hard = metrics.get("hard_fail") or []
+        soft = metrics.get("soft_warn") or []
+        if hard:
+            logger.error("Validation HARD FAIL: %s", hard)
+        elif soft:
+            logger.warning("Validation passed with warnings: %s", soft)
         else:
             logger.info("Validation passed without issues: %s", metrics)
  
     @task
     def enforce_validation_policy(metrics: dict | None) -> None:
+        """
+        Gate the DAG on HARD failures only; keep soft warnings informational.
+        """
         if not metrics:
             raise AirflowFailException(
                 "Validation metrics missing; validation may have crashed."
             )
-        if metrics.get("hard_fail"):
+        hard = metrics.get("hard_fail") or []
+        if hard:
             raise AirflowFailException(
                 f"Validation hard-failed. See reports: {metrics.get('report_paths')}"
             )
@@ -289,10 +327,11 @@ def salad_preprocess_v1():
     report_task = report_validation_status(validate_task)
     enforce_task = enforce_validation_policy(validate_task)
  
+    SCRIPT_GE = REPO_ROOT / "scripts" / "ge_runner.py"
+    METRICS_DIR = DATA_DIR / "metrics"
+    BASELINE_SCHEMA = METRICS_DIR / "schema" / "baseline" / "schema.json"
 
-# assumes DVC_TRACK_PATHS is defined (list of strings) and REPO_ROOT points to repo root
-
-
+    # assumes DVC_TRACK_PATHS is defined (list of strings) and REPO_ROOT points to repo root
     dvc_push = BashOperator(
         task_id="dvc_push",
         trigger_rule=TriggerRule.ALL_SUCCESS,
@@ -324,19 +363,18 @@ def salad_preprocess_v1():
     )
 
     # ── Orchestration ───────────────────────────────────────────────────────────
-    dvc_pull >> paths >> cfg >> selected_csv >> validate_task
-    validate_task >> report_task
-    enforce_task.set_upstream(validate_task)
+    dvc_pull >> paths >> cfg >> selected_csv >> validate_task >> [report_task, enforce_task]
+    # validate_task >> report_task
+    # enforce_task.set_upstream(validate_task)
  
     # Email report always
-    report_task >> email_validation_report
-    enforce_task >> email_validation_report
+    validate_task >> email_validation_report
  
     # On success: push artifacts then success email
     enforce_task >> dvc_push >> email_success
  
     # On any failure in the core path: failure email
-    [selected_csv, validate_task, report_task, enforce_task] >> email_failure
+    [selected_csv, validate_task, enforce_task] >> email_failure
  
  
 dag = salad_preprocess_v1()
