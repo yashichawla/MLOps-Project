@@ -1,0 +1,40 @@
+{
+  "row_count": 14,
+  "columns": [
+    "prompt",
+    "category",
+    "prompt_id",
+    "text_length",
+    "size_label"
+  ],
+  "null_counts": {
+    "prompt": 1,
+    "category": 0,
+    "prompt_id": 0,
+    "text_length": 0,
+    "size_label": 0
+  },
+  "numerics": {
+    "text_length": {
+      "min": 0,
+      "max": 250,
+      "mean": 23.285714285714285
+    }
+  },
+  "categoricals": {
+    "size_label": {
+      "S": 13,
+      "M": 1
+    },
+    "category": {
+      "Other": 5,
+      "Hate Speech": 2,
+      "Unknown": 2,
+      "Illegal Activity": 1,
+      "Privacy Violence": 1,
+      "Malware Generation": 1,
+      "Physical Harm": 1,
+      "Fraud": 1
+    }
+  }
+}
