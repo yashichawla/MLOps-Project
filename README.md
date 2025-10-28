@@ -307,3 +307,12 @@ This document was created specifically for the Data Pipeline assignment submissi
 - How we plan to detect bias using data slicing (category-wise performance evaluation)
 - Future integration of bias analysis into the LLM evaluation pipeline
 - Possible mitigation strategies such as rebalancing prompts, fairness-aware evaluation, and score calibration
+
+
+### DAG Execution Timeline (Gannt Chart Overview)
+- The DAG starts with dvc_pull, which is the longest-running task (~15s) since it fetches tracked data from remote storage.
+- Set up tasks like ensure_dirs and ensure_config complete quickly (a few seconds each).
+- preprocess_input_csv and validate_output are moderate in duration, taking several seconds depending on the dataset size.
+- Validation follow-ups (report_validation_status, enforce_validation_policy) run almost instantly after validation completes.
+- dvc_push is another longer task (~10–12s) as it uploads outputs and validation reports back to remote storage.
+- Notification tasks (email_validation_report, email_success, email_failure) are short and run in parallel depending on pipeline status.
