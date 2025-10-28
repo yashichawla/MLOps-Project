@@ -1,13 +1,13 @@
 # Container-friendly pins (compatible with Airflow providers)
 numpy==1.26.4
 pandas==2.1.4
-datasets>=2.19.0
-fsspec==2023.12.2
+datasets>=2.16.1
+fsspec==2023.10.0
 pyarrow>=16.0.0
 tqdm>=4.66.0
 
 #dvc
 # dvc[gcs]>=3.0.0
-gcsfs==2023.12.2.post1
+gcsfs==2023.10.0
 dvc[gs]>=3.0.0
 # tests are not needed inside the runtime image, omit pytest here
