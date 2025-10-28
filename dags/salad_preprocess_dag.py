@@ -162,7 +162,7 @@ def salad_preprocess_v1():
         return str(cfg_path)
  
     @task
-    def select_input_csv(paths_and_cfg: tuple[str, str]) -> str:
+    def preprocess_input_csv(paths_and_cfg: tuple[str, str]) -> str:
         cfg_path, out_path = paths_and_cfg
         if TEST_MODE:
             logger.warning(
@@ -259,7 +259,7 @@ def salad_preprocess_v1():
         html_content="""
             <h3>Validation Report for {{ dag.dag_id }}</h3>
             <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
-            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='select_input_csv') }}</p>
+            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv') }}</p>
             <p><b>Hard Fail:</b> {{ ti.xcom_pull(task_ids='validate_output')['hard_fail'] if ti.xcom_pull(task_ids='validate_output') else 'n/a' }}</p>
             <p><b>Soft Warn:</b> {{ ti.xcom_pull(task_ids='validate_output')['soft_warn'] if ti.xcom_pull(task_ids='validate_output') else 'n/a' }}</p>
             <p>Reports are attached (if available). Locations recorded in XCom:
@@ -278,7 +278,7 @@ def salad_preprocess_v1():
         html_content="""
             <h3>DAG Succeeded: {{ dag.dag_id }}</h3>
             <p><b>Run:</b> {{ run_id }}</p>
-            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='select_input_csv') }}</p>
+            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv') }}</p>
             {% set m = ti.xcom_pull(task_ids='validate_output') %}
             {% if m %}
             <p><b>Rows:</b> {{ m['row_count'] }},
@@ -322,8 +322,8 @@ def salad_preprocess_v1():
  
     paths = ensure_dirs()
     cfg = ensure_config(paths)
-    selected_csv = select_input_csv((cfg, str(OUTPUT_PATH)))
-    validate_task = validate_output(selected_csv)
+    preprocessed_csv = preprocess_input_csv((cfg, str(OUTPUT_PATH)))
+    validate_task = validate_output(preprocessed_csv)
     report_task = report_validation_status(validate_task)
     enforce_task = enforce_validation_policy(validate_task)
  
@@ -363,9 +363,7 @@ def salad_preprocess_v1():
     )
 
     # ── Orchestration ───────────────────────────────────────────────────────────
-    dvc_pull >> paths >> cfg >> selected_csv >> validate_task >> [report_task, enforce_task]
-    # validate_task >> report_task
-    # enforce_task.set_upstream(validate_task)
+    dvc_pull >> paths >> cfg >> preprocessed_csv >> validate_task >> [report_task, enforce_task]
  
     # Email report always
     validate_task >> email_validation_report
@@ -374,7 +372,7 @@ def salad_preprocess_v1():
     enforce_task >> dvc_push >> email_success
  
     # On any failure in the core path: failure email
-    [selected_csv, validate_task, enforce_task] >> email_failure
+    [preprocessed_csv, validate_task, enforce_task] >> email_failure
  
  
 dag = salad_preprocess_v1()
