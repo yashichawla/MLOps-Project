@@ -26,6 +26,9 @@ Our project, **Break The Bot**, aims to build an automated MLOps pipeline for co
 
 ```plaintext
 MLOps-Project/
+├── .dvc/
+│   ├── .gitignore                     # Ignore DVC cache or temp files from version control
+│   └── config                         # DVC configuration file defining remote storage (e.g., GCS bucket)
 ├── dags/                              # Airflow DAGs
 │   └── salad_preprocess_dag.py        # Main DAG (preprocessing + single validation + email alerts)
 ├── scripts/
@@ -38,15 +41,21 @@ MLOps-Project/
 │   ├── processed/                     # Output CSV (processed_data.csv)
 │   ├── metrics/                       # Stats + validation results (used by Airflow + GE)
 │   └── test_validation/               # Test CSVs for test-mode runs
-├── airflow_artifacts/
-│   └── logs/                          # Mounted Airflow logs
+├── documents/
+│   ├── bias_detection_mitigation      # Report on how we are tackling bias detection and mitigation
+│   ├── project_scoping_report.pdf     # Initial project proposal and scope definition
+│   ├── user_needs.pdf                 # Summary of user requirements and intended system functionality
+│   └── errors_failures.pdf            # Document outlining known issues, risks, or failure handling strategies
+├── .airflow.env                       # Environment variables for local Airflow setup (e.g., connections, paths)
+├── .dockerignore                      # Files and folders excluded from the Docker build context
+├── .dvcignore                         # Files and folders excluded from DVC tracking
+├── .gitignore                         # Files and folders excluded from Git tracking
+├── pyproject.toml                     # Project metadata and dependency management configuration
 ├── docker-compose.yml                 # Airflow + Postgres stack
+├── dvc.lock                           # Auto-generated file tracking exact data and pipeline versions
+├── dvc.yaml                           # Defines the DVC pipeline stages (data processing, training, etc.)
 ├── requirements.txt                   # Dev dependencies (includes pandas, airflow, etc.)
 ├── requirements-docker.txt            # Installed inside Docker containers
-├── .env                               # Stores AIRFLOW_SMTP_USER & AIRFLOW_SMTP_PASSWORD
-├── setup_airflow.sh                   # One-time DB/user setup
-├── start_airflow.sh                   # Start Airflow (webserver + scheduler)
-├── stop_airflow.sh                    # Stop Airflow services
 └── README.md
 ```
 
@@ -170,6 +179,7 @@ preprocess_input_csv
             ├── email_success (if all pass)
             └── email_failure (if any fail)
 
+![DAG Pipeline Architecture](documents/DAG_Pipieline.jpg)
 
 # Validation Source of Truth
 
@@ -217,10 +227,11 @@ The entire process runs containerized inside Airflow, with DVC pull/push handled
 ### ⚙️ 1. Overview
 
 DVC is used to track and version the following pipeline outputs:
-
+```text
 data/processed/processed_data.csv
 data/stats/
 data/validation/
+```
 
 These are stored remotely in a GCS bucket and automatically synchronized through Airflow tasks (dvc pull / dvc push) running inside Docker.
 
@@ -237,9 +248,9 @@ Steps (one-time):
 2. The Docker Compose file mounts it automatically:
 ```yaml
 volumes:
-  - ./.secrets/gcp-dvc-key.json:/opt/airflow/secrets/gcp-dvc-key.json:ro
+  - ./.secrets/gcp-dvc-key.json:/opt/airflow/secrets/gcp-key.json:ro
 environment:
-  GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-dvc-key.json
+  GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
 ```
 
 3. DVC and all Airflow tasks use this environment variable for authentication to GCS.
@@ -249,9 +260,9 @@ environment:
 ### 🧱 3. Running Inside Airflow (Containerized)
 The Airflow DAG (salad_preprocess_dag.py) orchestrates:
 
-(a) dvc pull at pipeline start — ensures the latest data version is fetched.
-(b) Preprocessing & validation tasks.
-(c) dvc push after completion — uploads new artifacts to the GCS remote
+- dvc pull at pipeline start — ensures the latest data version is fetched.
+- Preprocessing & validation tasks.
+- dvc push after completion — uploads new artifacts to the GCS remote
 
 All commands run automatically inside the Airflow Docker containers — no CLI interaction is needed.
 
