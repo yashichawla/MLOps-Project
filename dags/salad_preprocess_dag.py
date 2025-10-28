@@ -17,7 +17,6 @@ from airflow.operators.email import EmailOperator
 from airflow.operators.bash import BashOperator
  
 from scripts.preprocess_salad import run_preprocessing
-from scripts.validator import run_validation
 
 logger = logging.getLogger(__name__)
  
@@ -194,31 +193,63 @@ def salad_preprocess_v1():
             GE outputs never gate the DAG; failures are logged but ignored here.
         """
 
-        # 1) Run pandas validation (this drives emails + gating)
-        allowed_env = os.getenv("ALLOWED_CATEGORIES")
-        allowed_categories = [c.strip() for c in allowed_env.split(",")] if allowed_env else None
+        # 1) Run GE baseline (if missing) and GE validate (non-blocking); GE is the source of truth
         ds_nodash = get_current_context()["ds_nodash"]
-        metrics = run_validation(
-            input_csv=out_csv_path,
-            metrics_root=str(METRICS_DIR),   # keep your existing METRICS_DIR
-            date_str=ds_nodash,
-            allowed_categories=allowed_categories,
-        )
-
-        # 2) Sidecar GE artifacts (optional, non-blocking)
         try:
             if not BASELINE_SCHEMA.exists():
                 subprocess.run(
                     ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
                     check=False,
                 )
-            subprocess.run(
-                ["python", str(SCRIPT_GE), "validate", "--input", out_csv_path,
-                "--baseline_schema", str(BASELINE_SCHEMA), "--date", ds_nodash],
+            res = subprocess.run(
+                [
+                    "python", str(SCRIPT_GE), "validate", "--input", out_csv_path,
+                    "--baseline_schema", str(BASELINE_SCHEMA), "--date", ds_nodash,
+                ],
                 check=False,
             )
+            if res.returncode not in (0, 1):
+                logger.warning("GE validate returned code %s", res.returncode)
         except Exception as e:
-            logger.warning("GE sidecar failed (non-blocking): %s", e)
+            logger.warning("GE validation invocation failed (non-blocking): %s", e)
+
+        # 2) Read GE-produced artifacts as the single source of metrics
+        anomalies_path = METRICS_DIR / "validation" / ds_nodash / "anomalies.json"
+        stats_path = METRICS_DIR / "stats" / ds_nodash / "stats.json"
+        metrics = {
+            "row_count": 0,
+            "null_prompt_count": None,
+            "dup_prompt_count": None,
+            "unknown_category_rate": None,
+            "text_len_min": None,
+            "text_len_max": None,
+            "size_label_mismatch_count": None,
+            "hard_fail": [],
+            "soft_warn": [],
+            "report_paths": [str(anomalies_path), str(stats_path)],
+        }
+        try:
+            if stats_path.exists():
+                with open(stats_path) as f:
+                    s = json.load(f)
+                metrics.update({
+                    "row_count": s.get("row_count", 0),
+                    "null_prompt_count": s.get("null_prompt_count"),
+                    "dup_prompt_count": s.get("dup_prompt_count"),
+                    "unknown_category_rate": s.get("unknown_category_rate"),
+                    "text_len_min": s.get("text_len_min"),
+                    "text_len_max": s.get("text_len_max"),
+                    "size_label_mismatch_count": s.get("size_label_mismatch_count"),
+                })
+            if anomalies_path.exists():
+                with open(anomalies_path) as f:
+                    a = json.load(f)
+                metrics.update({
+                    "hard_fail": a.get("hard_fail", []),
+                    "soft_warn": a.get("soft_warn", []),
+                })
+        except Exception as e:
+            logger.warning("Failed to read GE artifacts: %s", e)
 
         # Always return metrics for downstream report/enforce/email
         return metrics

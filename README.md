@@ -30,8 +30,7 @@ MLOps-Project/
 │   └── salad_preprocess_dag.py        # Main DAG (preprocessing + single validation + email alerts)
 ├── scripts/
 │   ├── preprocess_salad.py            # Data preprocessing pipeline
-│   ├── validator.py                   # Pandas-based data validator (main source of truth)
-│   ├── ge_runner.py                   # Optional Great Expectations sidecar (baseline + schema.json)
+│   ├── ge_runner.py                   # Great Expectations Validator
 │   └── utils/                         # Shared helper modules (if any)
 ├── config/
 │   └── data_sources.json              # Config file for multi-source data ingestion
@@ -161,21 +160,10 @@ Use this when you want to skip preprocessing and only validate a CSV.
 
 In the Airflow UI, open Admin → Variables, and set TEST_MODE to true to activate test mode.
 
-### Validation Pipeline Overview
-
-We simplified the DAG to use a **single validation task** that integrates both:
-- a **Pandas-based validator** (`scripts/validator.py`) — drives hard/soft checks and email reports
-- an optional **Great Expectations sidecar** (`scripts/ge_runner.py`) — generates a baseline `schema.json`, per-run stats, and anomalies for auditing
-
-**Key benefits:**
-- No duplicate validation tasks
-- Works on Python 3.12 (no TFDV)
-- Same XCom metrics feed into all Airflow emails
-
 #### DAG flow 
 
 preprocess_input_csv
-└── validate_output # runs validator + GE sidecar
+└── validate_output # runs GE validator
       ├── report_validation_status (logs)
       ├── enforce_validation_policy (fails on hard errors)
    ├── email_validation_report (always)
@@ -183,31 +171,16 @@ preprocess_input_csv
             └── email_failure (if any fail)
 
 
-#### What `validator.py` checks
+# Validation Source of Truth
 
-| Level       | Check                                                                             | Severity  |
-|-------------|-----------------------------------------------------------------------------------|-----------|
-| File        | File must exist and ≥ 50 rows                                                     | Hard Fail |
-| Schema      | Columns `prompt`, `category`, `prompt_id`, `text_length`, `size_label` must exist | Hard Fail |
-| Prompt      | Null or empty prompts                                                             | Hard Fail |
-| Prompt      | Duplicate prompts                                                                 | Soft Warn |
-| Category    | Not in allowed list (if ALLOWED_CATEGORIES set)                                   | Hard Fail |
-| Category    | "Unknown" fraction > 0.30                                                         | Soft Warn |
-| Text Length | Record min/max for info                                                           | Info      |
-| Text Length | Max > 8000                                                                        | Soft Warn |
-| Size Label  | Mismatch with expected S/M/L bin                                                  | Soft Warn |
-
-Outputs per run:
-- data/metrics/stats/YYYYMMDD/stats.json
-- data/metrics/validation/YYYYMMDD/anomalies.json
-
-### ⚙️ Optional: Great Expectations Sidecar
-
-Inside `validate_output`, we also invoke:
-- `ge_runner.py baseline` → creates `data/metrics/schema/baseline/schema.json` if missing  
-- `ge_runner.py validate` → writes additional `stats.json` and `anomalies.json`
-
-These artifacts are for audit only and **do not affect pass/fail**.
+- `scripts/ge_runner.py` is the single validator used by the Airflow DAG.
+- The DAG invokes:
+  - `python scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` if missing)
+  - `python scripts/ge_runner.py validate --input <csv> --baseline_schema <path> --date YYYYMMDD`
+- Validation artifacts (source of truth):
+  - `data/metrics/stats/YYYYMMDD/stats.json` (includes row_count, null/dup counts, unknown_category_rate, text_len_min/max, size_label_mismatch_count)
+  - `data/metrics/validation/YYYYMMDD/anomalies.json` (hard_fail, soft_warn, info)
+- Airflow reads these files to construct the XCom metrics used for gating and email reports.
 
 ### SMTP Setup (Gmail)
 
@@ -341,3 +314,9 @@ dvc status   # should show: Data and pipelines are up to date.
 - The DAG performs **in-place validation** on `data/processed/processed_data.csv`.
 - Validation artifacts are versioned under `data/metrics/` and can be tracked via DVC if desired.
 - You can optionally run `python scripts/ge_runner.py baseline` manually to regenerate a new baseline schema.
+
+### Validation Source of Truth (Update)
+
+- `scripts/ge_runner.py` is the single validator used by the DAG.
+- The DAG invokes `ge_runner.py baseline` (if missing) and `ge_runner.py validate`, then reads `data/metrics/stats/YYYYMMDD/stats.json` and `data/metrics/validation/YYYYMMDD/anomalies.json` for gating and emails.
+- The legacy pandas-based `validator.py` has been removed.

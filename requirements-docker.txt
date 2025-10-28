@@ -8,6 +8,6 @@ tqdm>=4.66.0
 
 #dvc
 # dvc[gcs]>=3.0.0
-gcsfs>=2024.2.0
+gcsfs==2023.12.2.post1
 dvc[gs]>=3.0.0
 # tests are not needed inside the runtime image, omit pytest here
