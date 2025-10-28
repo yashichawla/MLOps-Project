@@ -27,7 +27,6 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
-      PATH: "/home/airflow/.local/bin:${PATH}"
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
@@ -60,7 +59,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
-      PATH: "/home/airflow/.local/bin:${PATH}"
       PYTHONPATH: /opt/airflow/app
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
@@ -104,7 +102,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
-      PATH: "/home/airflow/.local/bin:${PATH}"
       PYTHONPATH: /opt/airflow/app
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
