@@ -42,8 +42,7 @@ MLOps-Project/
 │   ├── metrics/                       # Stats + validation results (used by Airflow + GE)
 │   └── test_validation/               # Test CSVs for test-mode runs
 ├── documents/
-│   ├── gantt_chart                    # Gantt chart of DAG
-│   ├── bias_detection_mitigation      # Report on how we are tackling bias detection and mitigation
+│   ├── bias_detection_mitigation.pdf  # Report on how we are tackling bias detection and mitigation
 │   ├── project_scoping_report.pdf     # Initial project proposal and scope definition
 │   ├── user_needs.pdf                 # Summary of user requirements and intended system functionality
 │   └── errors_failures.pdf            # Document outlining known issues, risks, or failure handling strategies
