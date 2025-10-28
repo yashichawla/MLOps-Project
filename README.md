@@ -27,26 +27,27 @@ Our project, **Break The Bot**, aims to build an automated MLOps pipeline for co
 ```plaintext
 MLOps-Project/
 ├── dags/                              # Airflow DAGs
-│   └── salad_preprocess_dag.py       # Main preprocessing + validation DAG (Test Mode supported)
-├── scripts/                           # Python logic used inside DAG
-│   ├── preprocess_salad.py           # New modular preprocessing pipeline
-│   └── validate_salad.py             # Data quality checks + report generation
+│   └── salad_preprocess_dag.py        # Main DAG (preprocessing + single validation + email alerts)
+├── scripts/
+│   ├── preprocess_salad.py            # Data preprocessing pipeline
+│   ├── validator.py                   # Pandas-based data validator (main source of truth)
+│   ├── ge_runner.py                   # Optional Great Expectations sidecar (baseline + schema.json)
+│   └── utils/                         # Shared helper modules (if any)
 ├── config/
-│   └── data_sources.json             # Config file for multi-source data ingestion
+│   └── data_sources.json              # Config file for multi-source data ingestion
 ├── data/
-│   ├── processed/                    # Output CSV (processed_data.csv)
-│   ├── validation_reports/           # validation_<timestamp>.json saved here
-│   └── test_validation/              # Test CSVs for Test Mode runs
-├── airflow_artifacts/                # Airflow logs (mounted inside container)
-│   └── logs/
-├── docker-compose.yml                # Airflow + Postgres stack (supports email alerts)
-├── .env                              # Stores AIRFLOW_SMTP_USER & AIRFLOW_SMTP_PASSWORD
-├── requirements.txt                  # Local dev dependencies
-├── requirements-docker.txt           # Installed inside Docker containers
-├── setup_airflow.sh                  # One-time setup (database + users)
-├── start_airflow.sh                  # Start webserver + scheduler (local WSL)
-├── stop_airflow.sh                   # Stop Airflow services
-├── pyproject.toml                    # Editable install for local import paths
+│   ├── processed/                     # Output CSV (processed_data.csv)
+│   ├── metrics/                       # Stats + validation results (used by Airflow + GE)
+│   └── test_validation/               # Test CSVs for test-mode runs
+├── airflow_artifacts/
+│   └── logs/                          # Mounted Airflow logs
+├── docker-compose.yml                 # Airflow + Postgres stack
+├── requirements.txt                   # Dev dependencies (includes pandas, airflow, etc.)
+├── requirements-docker.txt            # Installed inside Docker containers
+├── .env                               # Stores AIRFLOW_SMTP_USER & AIRFLOW_SMTP_PASSWORD
+├── setup_airflow.sh                   # One-time DB/user setup
+├── start_airflow.sh                   # Start Airflow (webserver + scheduler)
+├── stop_airflow.sh                    # Stop Airflow services
 └── README.md
 ```
 
@@ -160,6 +161,54 @@ Use this when you want to skip preprocessing and only validate a CSV.
 
 In the Airflow UI, open Admin → Variables, and set TEST_MODE to true to activate test mode.
 
+### Validation Pipeline Overview
+
+We simplified the DAG to use a **single validation task** that integrates both:
+- a **Pandas-based validator** (`scripts/validator.py`) — drives hard/soft checks and email reports
+- an optional **Great Expectations sidecar** (`scripts/ge_runner.py`) — generates a baseline `schema.json`, per-run stats, and anomalies for auditing
+
+**Key benefits:**
+- No duplicate validation tasks
+- Works on Python 3.12 (no TFDV)
+- Same XCom metrics feed into all Airflow emails
+
+#### DAG flow 
+
+preprocess_input_csv
+└── validate_output # runs validator + GE sidecar
+      ├── report_validation_status (logs)
+      ├── enforce_validation_policy (fails on hard errors)
+   ├── email_validation_report (always)
+            ├── email_success (if all pass)
+            └── email_failure (if any fail)
+
+
+#### What `validator.py` checks
+
+| Level       | Check                                                                             | Severity  |
+|-------------|-----------------------------------------------------------------------------------|-----------|
+| File        | File must exist and ≥ 50 rows                                                     | Hard Fail |
+| Schema      | Columns `prompt`, `category`, `prompt_id`, `text_length`, `size_label` must exist | Hard Fail |
+| Prompt      | Null or empty prompts                                                             | Hard Fail |
+| Prompt      | Duplicate prompts                                                                 | Soft Warn |
+| Category    | Not in allowed list (if ALLOWED_CATEGORIES set)                                   | Hard Fail |
+| Category    | "Unknown" fraction > 0.30                                                         | Soft Warn |
+| Text Length | Record min/max for info                                                           | Info      |
+| Text Length | Max > 8000                                                                        | Soft Warn |
+| Size Label  | Mismatch with expected S/M/L bin                                                  | Soft Warn |
+
+Outputs per run:
+- data/metrics/stats/YYYYMMDD/stats.json
+- data/metrics/validation/YYYYMMDD/anomalies.json
+
+### ⚙️ Optional: Great Expectations Sidecar
+
+Inside `validate_output`, we also invoke:
+- `ge_runner.py baseline` → creates `data/metrics/schema/baseline/schema.json` if missing  
+- `ge_runner.py validate` → writes additional `stats.json` and `anomalies.json`
+
+These artifacts are for audit only and **do not affect pass/fail**.
+
 ### SMTP Setup (Gmail)
 
 Create .env file in project root:
@@ -169,13 +218,17 @@ AIRFLOW_SMTP_USER=your_email@gmail.com
 AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Not normal password
 ```
 
-This DAG sends emails automatically:
+## 📧 Email Notifications (automatic)
 
-| When?   | Email Contains                      |
-| ------- | ----------------------------------- |
-| Always  | Validation report (JSON attached)   |
-| Success | ✅ DAG succeeded summary            |
-| Failure | ❌ DAG failed + issue + report path |
+The DAG now uses the unified validator’s XCom output for all emails:
+
+| Trigger | Email | Contents |
+|----------|--------|----------|
+| Always | **Validation Report** | JSON report + anomalies attached |
+| On Success | **✅ DAG Succeeded** | Summary of counts and ranges |
+| On Failure | **❌ DAG Failed** | Hard-fail reasons + report paths |
+
+Recipients are configured in `salad_preprocess_dag.py` under each `EmailOperator`.
 
 To add more recipients, edit in salad_preprocess_dag.py:
 
@@ -283,3 +336,8 @@ git commit -m "Untrack processed_data.csv (DVC-managed)"
 ```bash
 dvc status   # should show: Data and pipelines are up to date.
 ```
+### 🧩 Data Validation Notes
+
+- The DAG performs **in-place validation** on `data/processed/processed_data.csv`.
+- Validation artifacts are versioned under `data/metrics/` and can be tracked via DVC if desired.
+- You can optionally run `python scripts/ge_runner.py baseline` manually to regenerate a new baseline schema.
