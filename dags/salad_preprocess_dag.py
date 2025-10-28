@@ -12,29 +12,29 @@ from airflow.exceptions import AirflowFailException
 from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.operators.email import EmailOperator
- 
+
 from airflow.operators.bash import BashOperator
- 
+
 from scripts.preprocess_salad import run_preprocessing
 
 logger = logging.getLogger(__name__)
- 
+
 # repo layout
 REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1]))
 DATA_DIR = REPO_ROOT / "data"
 OUT_DIR = DATA_DIR / "processed"
 CFG_DIR = REPO_ROOT / "config"
- 
+
 # allow override via env/Variables if you want
 CONFIG_PATH = Path(os.environ.get("SALAD_CONFIG_PATH", CFG_DIR / "data_sources.json"))
 OUTPUT_PATH = Path(os.environ.get("SALAD_OUTPUT_PATH", OUT_DIR / "processed_data.csv"))
- 
+
 # Airflow Variables (with defaults)
 TEST_MODE = Variable.get("TEST_MODE", default_var="false").lower() == "true"
 TEST_CSV_PATH = Variable.get(
     "TEST_CSV_PATH", default_var=str(DATA_DIR / "test_validation" / "test.csv")
 )
- 
+
 DEFAULT_CONFIG = {
     "data_sources": [
         {
@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
         }
     ]
 }
- 
+
 # Identify which DVC paths to track/push after a successful run.
 # Adjust to include any directories/files your pipeline updates and you want versioned.
 # DVC_TRACK_PATHS = [
@@ -56,8 +56,8 @@ DVC_TRACK_PATHS = [
     "data/processed",
     "airflow_artifacts/reports",
 ]
- 
- 
+
+
 @dag(
     dag_id="salad_preprocess_v1",
     description="Unified preprocessing for Salad-Data + other sources via config (with Test Mode).",
@@ -72,7 +72,7 @@ DVC_TRACK_PATHS = [
     tags=["salad", "preprocessing", "v1", "mlops", "testmode"],
 )
 def salad_preprocess_v1():
- 
+
     # Pull the latest versioned inputs from remote at the very start.
     dvc_pull = BashOperator(
         task_id="dvc_pull",
@@ -111,7 +111,6 @@ def salad_preprocess_v1():
         ''',
     )
 
-  
     @setup
     @task
     def ensure_dirs() -> dict:
@@ -133,8 +132,7 @@ def salad_preprocess_v1():
             "output_path": str(OUTPUT_PATH),
             "test_csv_path": str(TEST_CSV_PATH),
         }
- 
- 
+
     @task
     def ensure_config(paths: dict) -> str:
         """Ensure config file exists and contains a valid data_sources section."""
@@ -159,7 +157,7 @@ def salad_preprocess_v1():
         except Exception as e:
             raise AirflowFailException(f"Failed to read/validate config: {e}")
         return str(cfg_path)
- 
+
     @task
     def preprocess_input_csv(paths_and_cfg: tuple[str, str]) -> str:
         """Run preprocessing if TEST_MODE is off; otherwise return test CSV."""
@@ -174,7 +172,7 @@ def salad_preprocess_v1():
                 logger.error("Test CSV does not exist: %s", test_p)
                 raise AirflowFailException(f"Missing TEST_CSV_PATH: {test_p}")
             return str(test_p)
- 
+
         logger.info(
             "TEST_MODE is OFF — running preprocessing with config=%s -> %s",
             cfg_path, out_path,
@@ -184,7 +182,7 @@ def salad_preprocess_v1():
             raise AirflowFailException(f"Expected output not found or empty: {out_path}")
         logger.info("Preprocessing complete. Output at %s", out_path)
         return out_path
- 
+
     @task
     def validate_output(out_csv_path: str) -> dict:
         """
@@ -233,28 +231,32 @@ def salad_preprocess_v1():
             if stats_path.exists():
                 with open(stats_path) as f:
                     s = json.load(f)
-                metrics.update({
-                    "row_count": s.get("row_count", 0),
-                    "null_prompt_count": s.get("null_prompt_count"),
-                    "dup_prompt_count": s.get("dup_prompt_count"),
-                    "unknown_category_rate": s.get("unknown_category_rate"),
-                    "text_len_min": s.get("text_len_min"),
-                    "text_len_max": s.get("text_len_max"),
-                    "size_label_mismatch_count": s.get("size_label_mismatch_count"),
-                })
+                metrics.update(
+                    {
+                        "row_count": s.get("row_count", 0),
+                        "null_prompt_count": s.get("null_prompt_count"),
+                        "dup_prompt_count": s.get("dup_prompt_count"),
+                        "unknown_category_rate": s.get("unknown_category_rate"),
+                        "text_len_min": s.get("text_len_min"),
+                        "text_len_max": s.get("text_len_max"),
+                        "size_label_mismatch_count": s.get("size_label_mismatch_count"),
+                    }
+                )
             if anomalies_path.exists():
                 with open(anomalies_path) as f:
                     a = json.load(f)
-                metrics.update({
-                    "hard_fail": a.get("hard_fail", []),
-                    "soft_warn": a.get("soft_warn", []),
-                })
+                metrics.update(
+                    {
+                        "hard_fail": a.get("hard_fail", []),
+                        "soft_warn": a.get("soft_warn", []),
+                    }
+                )
         except Exception as e:
             logger.warning("Failed to read GE artifacts: %s", e)
 
         # Always return metrics for downstream report/enforce/email
         return metrics
- 
+
     @task(trigger_rule=TriggerRule.ALL_DONE)
     def report_validation_status(metrics: dict | None) -> None:
         """Log validation outcome (pass, warnings, or hard fail)."""
@@ -269,7 +271,7 @@ def salad_preprocess_v1():
             logger.warning("Validation passed with warnings: %s", soft)
         else:
             logger.info("Validation passed without issues: %s", metrics)
- 
+
     @task
     def enforce_validation_policy(metrics: dict | None) -> None:
         """Fail the DAG if there are hard validation failures."""
@@ -282,7 +284,7 @@ def salad_preprocess_v1():
             raise AirflowFailException(
                 f"Validation hard-failed. See reports: {metrics.get('report_paths')}"
             )
- 
+
     email_validation_report = EmailOperator(
         task_id="email_validation_report",
         to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
@@ -301,7 +303,7 @@ def salad_preprocess_v1():
         ],
         trigger_rule=TriggerRule.ALL_DONE,
     )
- 
+
     email_success = EmailOperator(
         task_id="email_success",
         to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
@@ -322,7 +324,7 @@ def salad_preprocess_v1():
         """,
         trigger_rule=TriggerRule.ALL_SUCCESS,
     )
- 
+
     email_failure = EmailOperator(
         task_id="email_failure",
         to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
@@ -350,14 +352,14 @@ def salad_preprocess_v1():
         """,
         trigger_rule=TriggerRule.ONE_FAILED,
     )
- 
+
     paths = ensure_dirs()
     cfg = ensure_config(paths)
     preprocessed_csv = preprocess_input_csv((cfg, str(OUTPUT_PATH)))
     validate_task = validate_output(preprocessed_csv)
     report_task = report_validation_status(validate_task)
     enforce_task = enforce_validation_policy(validate_task)
- 
+
     SCRIPT_GE = REPO_ROOT / "scripts" / "ge_runner.py"
     METRICS_DIR = DATA_DIR / "metrics"
     BASELINE_SCHEMA = METRICS_DIR / "schema" / "baseline" / "schema.json"
@@ -398,12 +400,12 @@ def salad_preprocess_v1():
  
     # Email report always
     validate_task >> email_validation_report
- 
+
     # On success: push artifacts then success email
     enforce_task >> dvc_push >> email_success
- 
+
     # On any failure in the core path: failure email
     [preprocessed_csv, validate_task, enforce_task] >> email_failure
- 
- 
+
+
 dag = salad_preprocess_v1()
