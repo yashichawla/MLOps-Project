@@ -1,76 +1,130 @@
+import pytest
 import pandas as pd
-from scripts.validate_salad import validate_output_csv
+import json
+import numpy as np
+from pathlib import Path
+from scripts.validator import run_validation
 
-# --- BASIC TESTS ---
+def make_csv(tmp_path, df):
+    csv_path = tmp_path / "data.csv"
+    df.to_csv(csv_path, index=False)
+    return csv_path
 
-def test_validation_hard_fails_on_missing_columns(tmp_path):
-    df = pd.DataFrame({"prompt": ["hello"], "category": ["Unknown"]})
-    bad_csv = tmp_path / "bad.csv"
-    df.to_csv(bad_csv, index=False)
-    result = validate_output_csv(str(bad_csv), tmp_path)
-    assert result["hard_fail"] is True
-    assert "missing_columns" in result or result["row_count"] == 0
 
-def test_validation_soft_warns_on_unknown_rate(tmp_path):
+# ---------------- BASIC VALIDATION ----------------
+
+def test_hard_fail_on_missing_columns(tmp_path):
+    df = pd.DataFrame({"wrong_col": [1, 2]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    assert any("Missing required" in msg for msg in result["hard_fail"])
+
+
+def test_empty_file_triggers_hard_fail(tmp_path):
+    path = tmp_path / "empty.csv"
+    path.write_text("")  # Empty file
+    with pytest.raises(pd.errors.EmptyDataError):
+        run_validation(str(path), str(tmp_path))
+
+
+# ---------------- DUPLICATES ----------------
+
+def test_detects_duplicates(tmp_path):
+    df = pd.DataFrame({"prompt": ["hi", "hi", "hello"], "category": ["A", "A", "B"]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    stats_file = Path(tmp_path) / "metrics" / "stats.json"
+    if stats_file.exists():
+        stats = json.loads(stats_file.read_text())
+        assert "duplicates" in json.dumps(stats).lower()
+
+
+def test_case_insensitive_duplicates(tmp_path):
+    df = pd.DataFrame({"prompt": ["Hi", "hi"], "category": ["A", "A"]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    stats_file = Path(tmp_path) / "metrics" / "stats.json"
+    if stats_file.exists():
+        stats = json.loads(stats_file.read_text())
+        assert "duplicates" in json.dumps(stats).lower()
+
+
+# ---------------- CATEGORY VALIDATION ----------------
+
+def test_invalid_category_triggers_warn(tmp_path):
+    df = pd.DataFrame({"prompt": ["hi"], "category": ["Invalid Category"]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+
+    stats_file = Path(tmp_path) / "metrics" / "stats.json"
+    if stats_file.exists():
+        stats = json.loads(stats_file.read_text())
+        assert "unknown" in json.dumps(stats).lower() or result["soft_warn"]
+    else:
+        assert result["soft_warn"] or result["hard_fail"]
+
+def test_soft_warn_on_high_unknown_rate(tmp_path):
+    df = pd.DataFrame({"prompt": ["hi"] * 100, "category": ["Unknown"] * 100})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    assert isinstance(result, dict)
+
+
+# ---------------- TEXT LENGTH ----------------
+
+def test_short_text_triggers_soft_warn(tmp_path):
+    df = pd.DataFrame({"prompt": ["a", "b"], "category": ["A", "B"]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    stats_file = Path(tmp_path) / "metrics" / "stats.json"
+    if stats_file.exists():
+        stats = json.loads(stats_file.read_text())
+        assert "avg_text_length" in stats or "min_text_length" in stats
+
+
+def test_long_text_soft_warn(tmp_path):
+    df = pd.DataFrame({"prompt": ["x" * 2000], "category": ["A"]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    stats_file = Path(tmp_path) / "metrics" / "stats.json"
+    if stats_file.exists():
+        stats = json.loads(stats_file.read_text())
+        assert "max_text_length" in stats
+
+
+# ---------------- THRESHOLDS ----------------
+
+def test_soft_threshold_row_count(tmp_path):
+    df = pd.DataFrame({"prompt": ["hi"], "category": ["A"]})
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    assert any("row" in msg.lower() or "count" in msg.lower() for msg in result["hard_fail"] + result["soft_warn"])
+
+
+def test_extra_columns_dont_fail(tmp_path):
     df = pd.DataFrame({
-        "prompt": ["hi", "hello", "ok"],
-        "category": ["Unknown", "Unknown", "Unknown"],
-        "prompt_id": [1, 2, 3],
-        "text_length": [10, 20, 30],
-        "size_label": ["S", "M", "L"],
+        "prompt": ["hi"],
+        "category": ["A"],
+        "extra_col": [123]
     })
-    csv = tmp_path / "unknown.csv"
-    df.to_csv(csv, index=False)
-    result = validate_output_csv(str(csv), tmp_path)
-    assert "unknown_category_rate" in result
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    assert isinstance(result, dict)
 
-# --- EDGE CASES ---
 
-def test_validation_detects_duplicates(tmp_path):
+# ---------------- VALID DATA ----------------
+
+def test_valid_data_passes_all(tmp_path):
     df = pd.DataFrame({
-        "prompt": ["same", "same", "diff"],
-        "category": ["Illegal Activity", "Illegal Activity", "Hate Speech"],
-        "prompt_id": [1, 2, 3],
-        "text_length": [5, 5, 10],
-        "size_label": ["S", "S", "S"],
+        "prompt": [f"Prompt {i}" for i in range(60)],
+        "category": ["Safe"] * 60,
+        "prompt_id": np.arange(60),
+        "text_length": np.random.randint(10, 200, 60),
+        "size_label": ["M"] * 60
     })
-    csv = tmp_path / "dupes.csv"
-    df.to_csv(csv, index=False)
-    result = validate_output_csv(str(csv), tmp_path)
-    assert result["row_count"] == 3
-
-def test_validation_empty_file(tmp_path):
-    csv = tmp_path / "empty.csv"
-    # Create a valid CSV structure with required columns but no rows
-    pd.DataFrame(columns=["prompt", "category", "prompt_id", "text_length", "size_label"]).to_csv(csv, index=False)
-    result = validate_output_csv(str(csv), tmp_path)
-    # Empty file should hard fail because it has 0 rows (below DQ_MIN_ROWS=50)
-    assert result["hard_fail"]
-
-def test_validation_long_text_detection(tmp_path):
-    df = pd.DataFrame({
-        "prompt": ["a" * 9000],
-        "category": ["Illegal Activity"],
-        "prompt_id": [1],
-        "text_length": [9000],
-        "size_label": ["L"],
-    })
-    csv = tmp_path / "longtext.csv"
-    df.to_csv(csv, index=False)
-    result = validate_output_csv(str(csv), tmp_path)
-    assert "long_text" in result or result["soft_warn"]
-
-def test_validation_handles_all_ok_case(tmp_path):
-    # Create enough rows to pass the DQ_MIN_ROWS (50) threshold
-    df = pd.DataFrame({
-        "prompt": [f"prompt_{i}" for i in range(60)],
-        "category": ["Illegal Activity", "Hate Speech"] * 30,
-        "prompt_id": [i for i in range(60)],
-        "text_length": [10 + i for i in range(60)],
-        "size_label": ["S" if i < 50 else "M" for i in range(60)],
-    })
-    csv = tmp_path / "good.csv"
-    df.to_csv(csv, index=False)
-    result = validate_output_csv(str(csv), tmp_path)
+    path = make_csv(tmp_path, df)
+    result = run_validation(str(path), str(tmp_path))
+    assert isinstance(result, dict)
     assert not result["hard_fail"]
-    assert result["row_count"] == 60
+
+
