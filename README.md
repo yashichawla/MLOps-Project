@@ -42,6 +42,7 @@ MLOps-Project/
 │   ├── metrics/                       # Stats + validation results (used by Airflow + GE)
 │   └── test_validation/               # Test CSVs for test-mode runs
 ├── documents/
+│   ├── gantt_chart                    # Gantt chart of DAG
 │   ├── bias_detection_mitigation      # Report on how we are tackling bias detection and mitigation
 │   ├── project_scoping_report.pdf     # Initial project proposal and scope definition
 │   ├── user_needs.pdf                 # Summary of user requirements and intended system functionality
@@ -77,21 +78,8 @@ cd MLOps-Project
    venv\Scripts\activate # On Windows
 ```
 
-3. Install Dependencies
-
-```bash
-   pip install -r requirements.txt
-```
-
-4. Run with Docker
-
-```bash
-   docker-compose up --build
-```
-
 ### Features:
 
-- Prompt Generator: Generates adversarial prompts using attacker LLMs.
 - Evaluator Service: Runs prompts against target models and logs results.
 - Judge Service: Scores responses for safety and refusal quality.
 - Dashboards: Grafana visualizations for safety trends, ASR, and alerts.
@@ -112,18 +100,6 @@ cd MLOps-Project
 - Week 7-8: Dashboards, monitoring, failure analysis.
 - Week 9-10: CI/CD gates, final validation, and reporting.
 
-### Bias Detection & Mitigation Document
-
-This repository also includes a Bias Detection and Mitigation Report (/documents/bias_detection_mitigation.md).
-This document was created specifically for the Data Pipeline assignment submission and explains:
-
-- What "bias" means in the context of this project (LLMs being more vulnerable to certain adversarial categories)
-
-- How we plan to detect bias using data slicing (category-wise performance evaluation)
-
-- Future integration of bias analysis into the LLM evaluation pipeline
-
-- Possible mitigation strategies such as rebalancing prompts, fairness-aware evaluation, and score calibration
 
 ### Setting up and running airflow w Docker (recommended)
 
@@ -322,15 +298,12 @@ dvc status   # should show: Data and pipelines are up to date.
 ```
 
 
-## 🧩 Data Validation Notes
+### Bias Detection & Mitigation Document
 
-- The DAG performs **in-place validation** on `data/processed/processed_data.csv`.
-- Validation artifacts are versioned under `data/metrics/` and can be tracked via DVC if desired.
-- You can optionally run `python scripts/ge_runner.py baseline` manually to regenerate a new baseline schema.
+This repository also includes a Bias Detection and Mitigation Report (/documents/bias_detection_mitigation.md).
+This document was created specifically for the Data Pipeline assignment submission and explains:
 
-
-### Validation Source of Truth (Update)
-
-- `scripts/ge_runner.py` is the single validator used by the DAG.
-- The DAG invokes `ge_runner.py baseline` (if missing) and `ge_runner.py validate`, then reads `data/metrics/stats/YYYYMMDD/stats.json` and `data/metrics/validation/YYYYMMDD/anomalies.json` for gating and emails.
-- The legacy pandas-based `validator.py` has been removed.
+- What "bias" means in the context of this project (LLMs being more vulnerable to certain adversarial categories)
+- How we plan to detect bias using data slicing (category-wise performance evaluation)
+- Future integration of bias analysis into the LLM evaluation pipeline
+- Possible mitigation strategies such as rebalancing prompts, fairness-aware evaluation, and score calibration
