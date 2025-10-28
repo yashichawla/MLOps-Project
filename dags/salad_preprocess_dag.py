@@ -1,49 +1,41 @@
 # dags/salad_preprocess_dag.py
-"""
-SALAD preprocessing DAG (with Test Mode)
-
-Normal mode:
-  - loads multi-source config
-  - preprocesses to data/processed/processed_data.csv
-  - validates and writes reports
-
-Test Mode (Airflow Variable TEST_MODE=true):
-  - skips preprocessing
-  - validates a separate test CSV at TEST_CSV_PATH
-"""
-
 from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import os
 import json
 import logging
+ 
 from airflow.decorators import dag, task, setup
 from airflow.exceptions import AirflowFailException
 from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.operators.email import EmailOperator
+ 
+# ✅ NEW: we'll call DVC via BashOperator
+from airflow.operators.bash import BashOperator
+ 
 from scripts.preprocess_salad import run_preprocessing
 from scripts.validate_salad import validate_output_csv
-
+ 
 logger = logging.getLogger(__name__)
-
+ 
 # repo layout
 REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1]))
 DATA_DIR = REPO_ROOT / "data"
 OUT_DIR = DATA_DIR / "processed"
 CFG_DIR = REPO_ROOT / "config"
-
+ 
 # allow override via env/Variables if you want
 CONFIG_PATH = Path(os.environ.get("SALAD_CONFIG_PATH", CFG_DIR / "data_sources.json"))
 OUTPUT_PATH = Path(os.environ.get("SALAD_OUTPUT_PATH", OUT_DIR / "processed_data.csv"))
-
+ 
 # Airflow Variables (with defaults)
 TEST_MODE = Variable.get("TEST_MODE", default_var="false").lower() == "true"
 TEST_CSV_PATH = Variable.get(
     "TEST_CSV_PATH", default_var=str(DATA_DIR / "test_validation" / "test.csv")
 )
-
+ 
 DEFAULT_CONFIG = {
     "data_sources": [
         {
@@ -52,11 +44,21 @@ DEFAULT_CONFIG = {
             "config": "attack_enhanced_set",
             "split": "train",
         }
-        # add more sources here (csv/json) via config
     ]
 }
-
-
+ 
+# ✅ NEW: tell DVC which paths to track/push after a successful run.
+# Adjust to include any directories/files your pipeline updates and you want versioned.
+# DVC_TRACK_PATHS = [
+#     str(OUT_DIR)               # data/processed/
+#     # str(AIRFLOW_REPORTS_DIR),   # airflow_artifacts/reports/
+# ]
+DVC_TRACK_PATHS = [
+    "data/processed",
+    "airflow_artifacts/reports",
+]
+ 
+ 
 @dag(
     dag_id="salad_preprocess_v1",
     description="Unified preprocessing for Salad-Data + other sources via config (with Test Mode).",
@@ -71,7 +73,46 @@ DEFAULT_CONFIG = {
     tags=["salad", "preprocessing", "v1", "mlops", "testmode"],
 )
 def salad_preprocess_v1():
+ 
+    # ✅ NEW: Pull the latest versioned inputs from remote at the very start.
+    dvc_pull = BashOperator(
+        task_id="dvc_pull",
+        env={
+            "GOOGLE_APPLICATION_CREDENTIALS": "/opt/airflow/secrets/gcp-key.json",
+            "DVC_NO_ANALYTICS": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        },
+        bash_command=f'''
+            set -euo pipefail
+            cd "{REPO_ROOT}"
 
+            # Ensure DVC is available
+            python -m pip install --no-cache-dir -q "dvc[gs]" gcsfs google-cloud-storage
+
+            # 0) Backup any conflicting local file that would block checkout (keeps your work!)
+            if [ -f "data/processed/processed_data.csv" ] && ! python -m dvc ls . >/dev/null 2>&1; then
+                : # (ls above is just to warm up dvc)
+            fi
+
+            if [ -f "data/processed/processed_data.csv" ]; then
+                TS=$(date +%Y%m%d_%H%M%S)
+                mkdir -p "data/processed/.backup"
+                cp -f "data/processed/processed_data.csv" "data/processed/.backup/processed_data.csv.$TS" || true
+                echo "[info] Backed up local data/processed/processed_data.csv -> data/processed/.backup/processed_data.csv.$TS"
+            fi
+
+            # 1) Optional: clear any hardcoded credentialpath so GOOGLE_APPLICATION_CREDENTIALS is used
+            if python -m dvc config --name remote.gcsremote.credentialpath >/dev/null 2>&1; then
+                python -m dvc config --local --unset remote.gcsremote.credentialpath || true
+            fi
+
+            # 2) Force checkout and pull so DVC can overwrite local files with tracked versions
+            python -m dvc checkout -f || true
+            python -m dvc pull -v -f
+        ''',
+    )
+
+  
     @setup
     @task
     def ensure_dirs() -> dict:
@@ -93,13 +134,10 @@ def salad_preprocess_v1():
             "output_path": str(OUTPUT_PATH),
             "test_csv_path": str(TEST_CSV_PATH),
         }
-
+ 
+ 
     @task
     def ensure_config(paths: dict) -> str:
-        """
-        Create a minimal config if none exists.
-        Returns absolute path to the config file to use.
-        """
         cfg_path = Path(paths["config_path"])
         if not cfg_path.exists():
             with open(cfg_path, "w") as f:
@@ -107,8 +145,6 @@ def salad_preprocess_v1():
             logger.info("Created default config at %s", cfg_path)
         else:
             logger.info("Using existing config at %s", cfg_path)
-
-        # quick sanity check
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
@@ -122,42 +158,32 @@ def salad_preprocess_v1():
                 )
         except Exception as e:
             raise AirflowFailException(f"Failed to read/validate config: {e}")
-
         return str(cfg_path)
-
+ 
     @task
     def select_input_csv(paths_and_cfg: tuple[str, str]) -> str:
-        """
-        If TEST_MODE is true, return TEST_CSV_PATH (skip preprocessing).
-        Otherwise run preprocessing and return OUTPUT_PATH.
-        """
         cfg_path, out_path = paths_and_cfg
         if TEST_MODE:
             logger.warning(
                 "TEST_MODE is ON — skipping preprocessing. Using test CSV: %s",
                 TEST_CSV_PATH,
             )
-            # Ensure file exists (warn if not)
             test_p = Path(TEST_CSV_PATH)
             if not test_p.exists():
                 logger.error("Test CSV does not exist: %s", test_p)
                 raise AirflowFailException(f"Missing TEST_CSV_PATH: {test_p}")
             return str(test_p)
-
-        # Normal run: preprocess
+ 
         logger.info(
             "TEST_MODE is OFF — running preprocessing with config=%s -> %s",
-            cfg_path,
-            out_path,
+            cfg_path, out_path,
         )
         run_preprocessing(config_path=cfg_path, save_path=out_path)
         if not Path(out_path).exists() or Path(out_path).stat().st_size == 0:
-            raise AirflowFailException(
-                f"Expected output not found or empty: {out_path}"
-            )
+            raise AirflowFailException(f"Expected output not found or empty: {out_path}")
         logger.info("Preprocessing complete. Output at %s", out_path)
         return out_path
-
+ 
     @task
     def validate_output(out_csv_path: str) -> dict:
         report_dirs = [
@@ -165,25 +191,21 @@ def salad_preprocess_v1():
             REPO_ROOT / "data" / "validation_reports",
         ]
         metrics = validate_output_csv(out_csv_path, report_dirs)
-        # DO NOT raise here; always return metrics so downstream can report/alert
         return metrics
-
+ 
     @task(trigger_rule=TriggerRule.ALL_DONE)
     def report_validation_status(metrics: dict | None) -> None:
         if not metrics:
-            logger.error(
-                "Validation metrics missing (task likely errored). Check logs."
-            )
+            logger.error("Validation metrics missing (task likely errored). Check logs.")
             return
         if metrics.get("soft_warn"):
             logger.warning("Validation passed with warnings: %s", metrics)
         else:
             logger.info("Validation passed without issues: %s", metrics)
-
+ 
     @task
     def enforce_validation_policy(metrics: dict | None) -> None:
         if not metrics:
-            # if validation crashed before producing metrics, fail cleanly
             raise AirflowFailException(
                 "Validation metrics missing; validation may have crashed."
             )
@@ -191,8 +213,7 @@ def salad_preprocess_v1():
             raise AirflowFailException(
                 f"Validation hard-failed. See reports: {metrics.get('report_paths')}"
             )
-
-    # 1) Always email the validation report (runs even if other tasks fail)
+ 
     email_validation_report = EmailOperator(
         task_id="email_validation_report",
         to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
@@ -207,13 +228,11 @@ def salad_preprocess_v1():
             <br><code>{{ ti.xcom_pull(task_ids='validate_output')['report_paths'] if ti.xcom_pull(task_ids='validate_output') else [] }}</code></p>
         """,
         files=[
-            # Attach the first report (if exists)
             "{{ (ti.xcom_pull(task_ids='validate_output')['report_paths'] or [])[0] if ti.xcom_pull(task_ids='validate_output') else '' }}"
         ],
-        trigger_rule=TriggerRule.ALL_DONE,  # send even if upstream failed
+        trigger_rule=TriggerRule.ALL_DONE,
     )
-
-    # 2) Email success summary (only if everything succeeded)
+ 
     email_success = EmailOperator(
         task_id="email_success",
         to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
@@ -232,10 +251,9 @@ def salad_preprocess_v1():
             {% endif %}
             <p>Great job! ✔</p>
         """,
-        trigger_rule=TriggerRule.ALL_SUCCESS,  # only when everything upstream passed
+        trigger_rule=TriggerRule.ALL_SUCCESS,
     )
-
-    # 3) Email failure summary (if anything failed)
+ 
     email_failure = EmailOperator(
         task_id="email_failure",
         to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
@@ -261,27 +279,64 @@ def salad_preprocess_v1():
             {% endif %}
             <p><b>Tip:</b> In the Airflow UI, open the failed task's “Log” for details.</p>
         """,
-        trigger_rule=TriggerRule.ONE_FAILED,  # fire if any upstream failed
+        trigger_rule=TriggerRule.ONE_FAILED,
     )
-
+ 
     paths = ensure_dirs()
     cfg = ensure_config(paths)
-
-    # Task instances (XComArg objects)
     selected_csv = select_input_csv((cfg, str(OUTPUT_PATH)))
-    validate_task = validate_output(selected_csv)  # returns metrics dict
-    report_task = report_validation_status(validate_task)  # logs
-    enforce_task = enforce_validation_policy(validate_task)  # raises on hard_fail
+    validate_task = validate_output(selected_csv)
+    report_task = report_validation_status(validate_task)
+    enforce_task = enforce_validation_policy(validate_task)
+ 
 
-    # Email report should run regardless of success/failure
+# assumes DVC_TRACK_PATHS is defined (list of strings) and REPO_ROOT points to repo root
+
+
+    dvc_push = BashOperator(
+        task_id="dvc_push",
+        trigger_rule=TriggerRule.ALL_SUCCESS,
+        env={
+            "REPO_ROOT": Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1])),  # root of your repo
+            "TEST_MODE": str(TEST_MODE).lower(),
+            "GOOGLE_APPLICATION_CREDENTIALS": "/opt/airflow/secrets/gcp-key.json",
+            "DVC_NO_ANALYTICS": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        },
+        bash_command="""{% raw %}
+    set -euo pipefail
+    cd "$REPO_ROOT"
+
+    echo "──────────────────────────────────────────"
+    echo "🔎 STEP 1: dvc status (cache/remote delta)"
+    python -m dvc status -c -v || true
+
+    echo "──────────────────────────────────────────"
+    echo "🚀 STEP 2: dvc push (sync to remote)"
+    python -m dvc push -v
+
+    echo "──────────────────────────────────────────"
+    echo "✅ STEP 3: Quick listing of processed outputs"
+    ls -la data/processed || true
+
+    echo "✅ DVC Push complete"
+    {% endraw %}""",
+    )
+
+    # ── Orchestration ───────────────────────────────────────────────────────────
+    dvc_pull >> paths >> cfg >> selected_csv >> validate_task
+    validate_task >> report_task
+    enforce_task.set_upstream(validate_task)
+ 
+    # Email report always
     report_task >> email_validation_report
     enforce_task >> email_validation_report
-
-    # Success email only if everything passed
-    enforce_task >> email_success
-
-    # Failure email if anything failed in the core path
+ 
+    # On success: push artifacts then success email
+    enforce_task >> dvc_push >> email_success
+ 
+    # On any failure in the core path: failure email
     [selected_csv, validate_task, report_task, enforce_task] >> email_failure
-
-
+ 
+ 
 dag = salad_preprocess_v1()

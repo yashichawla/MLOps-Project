@@ -6,14 +6,14 @@ stages:
     deps:
     - path: config/data_sources.json
       hash: md5
-      md5: f9088691602e8692e265d0ee0dfbf79c
-      size: 174
+      md5: 9aa550894d7c913bd0fe4627be6e226b
+      size: 164
     - path: scripts/preprocess_salad.py
       hash: md5
-      md5: d01575dd7b6b1e872eff98a30c825e19
-      size: 9459
+      md5: 6f9e9a6000bce70175eb118eda8de8a0
+      size: 9704
     outs:
     - path: data/processed/processed_data.csv
       hash: md5
-      md5: 123c5fe5f4b0b60afe4a6a11f0798343
-      size: 13295022
+      md5: 39eb190892bd302bc8ac6f7f845522e7
+      size: 13290021

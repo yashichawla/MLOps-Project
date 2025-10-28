@@ -51,3 +51,5 @@ Thumbs.db
 
 # (Optional) still ignore random JSONs at repo root only
 /*.json
+
+gcp-key.json
