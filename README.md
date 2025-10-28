@@ -174,7 +174,7 @@ We simplified the DAG to use a **single validation task** that integrates both:
 
 #### DAG flow 
 
-select_input_csv
+preprocess_input_csv
 └── validate_output # runs validator + GE sidecar
       ├── report_validation_status (logs)
       ├── enforce_validation_policy (fails on hard errors)
