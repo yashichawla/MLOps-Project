@@ -1,0 +1,7 @@
+{
+  "hard_fail": [],
+  "soft_warn": [],
+  "info": [
+    "text_length min=5, max=1757"
+  ]
+}
