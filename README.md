@@ -219,9 +219,7 @@ The entire process runs containerized inside Airflow, with DVC pull/push handled
 DVC is used to track and version the following pipeline outputs:
 
 data/processed/processed_data.csv
-
 data/stats/
-
 data/validation/
 
 These are stored remotely in a GCS bucket and automatically synchronized through Airflow tasks (dvc pull / dvc push) running inside Docker.
@@ -234,19 +232,15 @@ This setup uses a GCP service account key mounted securely into the Airflow cont
 Steps (one-time):
 
 1. Place your service account key JSON inside:
-
 .secrets/gcp-key.json
 
-
 2. The Docker Compose file mounts it automatically:
-
 ```yaml
 volumes:
   - ./.secrets/gcp-dvc-key.json:/opt/airflow/secrets/gcp-dvc-key.json:ro
 environment:
   GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-dvc-key.json
 ```
-
 
 3. DVC and all Airflow tasks use this environment variable for authentication to GCS.
 
@@ -255,8 +249,8 @@ environment:
 ### 🧱 3. Running Inside Airflow (Containerized)
 The Airflow DAG (salad_preprocess_dag.py) orchestrates:
 
-(a) dvc pull at pipeline start — ensures the latest data version is fetched
-(b) Preprocessing & validation tasks
+(a) dvc pull at pipeline start — ensures the latest data version is fetched.
+(b) Preprocessing & validation tasks.
 (c) dvc push after completion — uploads new artifacts to the GCS remote
 
 All commands run automatically inside the Airflow Docker containers — no CLI interaction is needed.
@@ -268,7 +262,7 @@ All commands run automatically inside the Airflow Docker containers — no CLI i
 If you wish to run DVC manually outside Docker:
 ```bash
 pip install -r requirements.txt
-export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/.secrets/gcp-dvc-key.json"
+$env:GOOGLE_APPLICATION_CREDENTIALS = "D:\MLOps-Project\.secrets\gcp-key.json"
 dvc pull       # fetch data from GCS
 dvc repro      # rebuild pipeline
 dvc push       # upload results
@@ -298,21 +292,19 @@ GCP Project ID: break-the-bot
 data/processed/processed_data.csv, data/metrics/stats, data/metrics/validation are tracked by DVC, not Git.
 
 If you see:
-
+```text
 output 'data/processed/processed_data.csv' is already tracked by SCM
+```
 
 fix with:
-
 ```bash
 git rm --cached data/processed/processed_data.csv
 git commit -m "Untrack processed_data.csv (DVC-managed)"
 ```
-
 Similarly, for other files.
 
 
 #### ✅ Verify
-
 ```bash
 dvc status   # should show: Data and pipelines are up to date.
 ```
