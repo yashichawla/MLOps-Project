@@ -1,7 +1,0 @@
-{
-  "hard_fail": [
-    "Row count 14 < 50."
-  ],
-  "soft_warn": [],
-  "info": []
-}
