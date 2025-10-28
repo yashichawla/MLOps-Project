@@ -1,10 +1,13 @@
 stages:
   salad_preprocess:
     cmd: >
-      python -c "import os; os.makedirs('data/processed', exist_ok=True)"
-      && python scripts/preprocess_salad.py
+      python -c "import os; [os.makedirs(p, exist_ok=True) for p in ('data/stats','data/validation','data/metrics')]"
+      && python scripts/preprocess_salad.py && python scripts/ge_runner.py validate
     deps:
       - scripts/preprocess_salad.py
       - config/data_sources.json
+      - scripts/ge_runner.py
     outs:
       - data/processed/processed_data.csv
+      - data/metrics/stats
+      - data/metrics/validation
