@@ -316,3 +316,5 @@ This document was created specifically for the Data Pipeline assignment submissi
 - Validation follow-ups (report_validation_status, enforce_validation_policy) run almost instantly after validation completes.
 - dvc_push is another longer task (~10–12s) as it uploads outputs and validation reports back to remote storage.
 - Notification tasks (email_validation_report, email_success, email_failure) are short and run in parallel depending on pipeline status.
+
+![Airflow DAG Gantt Chart](documents/Airflow_Gantt_Chart.jpeg)
