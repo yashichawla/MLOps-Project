@@ -46,6 +46,7 @@ MLOps-Project/
 │   ├── project_scoping_report.pdf     # Initial project proposal and scope definition
 │   ├── user_needs.pdf                 # Summary of user requirements and intended system functionality
 │   └── errors_failures.pdf            # Document outlining known issues, risks, or failure handling strategies
+├── tests/                             # Unit Test scripts for all components
 ├── .airflow.env                       # Environment variables for local Airflow setup (e.g., connections, paths)
 ├── .dockerignore                      # Files and folders excluded from the Docker build context
 ├── .dvcignore                         # Files and folders excluded from DVC tracking
@@ -179,7 +180,7 @@ preprocess_input_csv
             ├── email_success (if all pass)
             └── email_failure (if any fail)
 
-![DAG Pipeline Architecture](documents/DAG_Pipieline.jpg)
+![DAG Pipeline Architecture](documents/DAG_Pipeline.jpg)
 
 # Validation Source of Truth
 
@@ -198,7 +199,7 @@ Create .env file in project root:
 
 ```in
 AIRFLOW_SMTP_USER=your_email@gmail.com
-AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Not normal password
+AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Generate Google App Password (16 digit code)
 ```
 
 ## 📧 Email Notifications (automatic)
