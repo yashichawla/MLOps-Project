@@ -27,13 +27,17 @@ services:
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
       PYTHONPATH: /opt/airflow/app
+      PATH: "/home/airflow/.local/bin:${PATH}"
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
+      _PIP_ADDITIONAL_REQUIREMENTS: "datasets pandas pyarrow dvc[gs] gcsfs google-cloud-storage"
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
     volumes:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
       - ./airflow_artifacts/logs:/opt/airflow/logs
+      - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
     working_dir: /opt/airflow/app
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
@@ -56,11 +60,14 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
+      PATH: "/home/airflow/.local/bin:${PATH}"
       PYTHONPATH: /opt/airflow/app
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
-      # --- SMTP (Gmail) for EmailOperator (read from .env) ---
+      _PIP_ADDITIONAL_REQUIREMENTS: "datasets pandas pyarrow dvc[gs] gcsfs google-cloud-storage"
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
+      # --- SMTP (Gmail) for EmailOperator ---
       AIRFLOW__EMAIL__EMAIL_BACKEND: airflow.utils.email.send_email_smtp
       AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
       AIRFLOW__SMTP__SMTP_PORT: "587"
@@ -73,6 +80,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
       - ./airflow_artifacts/logs:/opt/airflow/logs
+      - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
     working_dir: /opt/airflow/app
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
@@ -96,11 +104,14 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__SCHEDULER__child_process_log_directory: /opt/airflow/logs/scheduler
+      PATH: "/home/airflow/.local/bin:${PATH}"
       PYTHONPATH: /opt/airflow/app
       PROJECT_ROOT: /opt/airflow/app
       SALAD_CONFIG_PATH: /opt/airflow/app/config/data_sources.json
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
-      # --- SMTP for task/EmailOperator sends (LocalExecutor runs tasks here) ---
+      _PIP_ADDITIONAL_REQUIREMENTS: "datasets pandas pyarrow dvc[gs] gcsfs google-cloud-storage"
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
+      # --- SMTP for task/EmailOperator ---
       AIRFLOW__EMAIL__EMAIL_BACKEND: airflow.utils.email.send_email_smtp
       AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
       AIRFLOW__SMTP__SMTP_PORT: "587"
@@ -113,6 +124,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
       - ./airflow_artifacts/logs:/opt/airflow/logs
+      - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
     working_dir: /opt/airflow/app
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
