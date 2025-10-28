@@ -100,7 +100,6 @@ cd MLOps-Project
 - Week 7-8: Dashboards, monitoring, failure analysis.
 - Week 9-10: CI/CD gates, final validation, and reporting.
 
-
 ### Setting up and running airflow w Docker (recommended)
 
 ```bash
@@ -146,15 +145,15 @@ Use this when you want to skip preprocessing and only validate a CSV.
 
 In the Airflow UI, open Admin → Variables, and set TEST_MODE to true to activate test mode.
 
-#### DAG flow 
+#### DAG flow
 
 preprocess_input_csv
 └── validate_output # runs GE validator
-      ├── report_validation_status (logs)
-      ├── enforce_validation_policy (fails on hard errors)
-   ├── email_validation_report (always)
-            ├── email_success (if all pass)
-            └── email_failure (if any fail)
+├── report_validation_status (logs)
+├── enforce_validation_policy (fails on hard errors)
+├── email_validation_report (always)
+├── email_success (if all pass)
+└── email_failure (if any fail)
 
 ![DAG Pipeline Architecture](documents/DAG_Pipeline.jpg)
 
@@ -182,11 +181,11 @@ AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Generate Google App Password (
 
 The DAG now uses the unified validator’s XCom output for all emails:
 
-| Trigger | Email | Contents |
-|----------|--------|----------|
-| Always | **Validation Report** | JSON report + anomalies attached |
-| On Success | **✅ DAG Succeeded** | Summary of counts and ranges |
-| On Failure | **❌ DAG Failed** | Hard-fail reasons + report paths |
+| Trigger    | Email                 | Contents                         |
+| ---------- | --------------------- | -------------------------------- |
+| Always     | **Validation Report** | JSON report + anomalies attached |
+| On Success | **✅ DAG Succeeded**  | Summary of counts and ranges     |
+| On Failure | **❌ DAG Failed**     | Hard-fail reasons + report paths |
 
 Recipients are configured in `salad_preprocess_dag.py` under each `EmailOperator`.
 
@@ -204,6 +203,7 @@ The entire process runs containerized inside Airflow, with DVC pull/push handled
 ### ⚙️ 1. Overview
 
 DVC is used to track and version the following pipeline outputs:
+
 ```text
 data/processed/processed_data.csv
 data/stats/
@@ -212,7 +212,6 @@ data/validation/
 
 These are stored remotely in a GCS bucket and automatically synchronized through Airflow tasks (dvc pull / dvc push) running inside Docker.
 
-
 ### 🔐 2. Authentication via Service Account Key
 
 This setup uses a GCP service account key mounted securely into the Airflow containers.
@@ -220,9 +219,10 @@ This setup uses a GCP service account key mounted securely into the Airflow cont
 Steps (one-time):
 
 1. Place your service account key JSON inside:
-.secrets/gcp-key.json
+   .secrets/gcp-key.json
 
 2. The Docker Compose file mounts it automatically:
+
 ```yaml
 volumes:
   - ./.secrets/gcp-dvc-key.json:/opt/airflow/secrets/gcp-key.json:ro
@@ -232,9 +232,8 @@ environment:
 
 3. DVC and all Airflow tasks use this environment variable for authentication to GCS.
 
-
-
 ### 🧱 3. Running Inside Airflow (Containerized)
+
 The Airflow DAG (salad_preprocess_dag.py) orchestrates:
 
 - dvc pull at pipeline start — ensures the latest data version is fetched.
@@ -243,11 +242,10 @@ The Airflow DAG (salad_preprocess_dag.py) orchestrates:
 
 All commands run automatically inside the Airflow Docker containers — no CLI interaction is needed.
 
-
-
 ### 🧩 4. For Local Debugging (Optional)
 
 If you wish to run DVC manually outside Docker:
+
 ```bash
 pip install -r requirements.txt
 $env:GOOGLE_APPLICATION_CREDENTIALS = "D:\MLOps-Project\.secrets\gcp-key.json"
@@ -255,7 +253,6 @@ dvc pull       # fetch data from GCS
 dvc repro      # rebuild pipeline
 dvc push       # upload results
 ```
-
 
 ### 🔄 5. When You Modify the Pipeline or Data
 
@@ -266,7 +263,6 @@ git commit -m "Update DVC pipeline or data sources"
 dvc push
 git push
 ```
-
 
 #### 🗂 Remote Storage Details
 
@@ -280,23 +276,25 @@ GCP Project ID: break-the-bot
 data/processed/processed_data.csv, data/metrics/stats, data/metrics/validation are tracked by DVC, not Git.
 
 If you see:
+
 ```text
 output 'data/processed/processed_data.csv' is already tracked by SCM
 ```
 
 fix with:
+
 ```bash
 git rm --cached data/processed/processed_data.csv
 git commit -m "Untrack processed_data.csv (DVC-managed)"
 ```
+
 Similarly, for other files.
 
-
 #### ✅ Verify
+
 ```bash
 dvc status   # should show: Data and pipelines are up to date.
 ```
-
 
 ### Bias Detection & Mitigation Document
 
@@ -308,8 +306,8 @@ This document was created specifically for the Data Pipeline assignment submissi
 - Future integration of bias analysis into the LLM evaluation pipeline
 - Possible mitigation strategies such as rebalancing prompts, fairness-aware evaluation, and score calibration
 
-
 ### DAG Execution Timeline (Gannt Chart Overview)
+
 - The DAG starts with dvc_pull, which is the longest-running task (~15s) since it fetches tracked data from remote storage.
 - Set up tasks like ensure_dirs and ensure_config complete quickly (a few seconds each).
 - preprocess_input_csv and validate_output are moderate in duration, taking several seconds depending on the dataset size.
@@ -317,4 +315,4 @@ This document was created specifically for the Data Pipeline assignment submissi
 - dvc_push is another longer task (~10–12s) as it uploads outputs and validation reports back to remote storage.
 - Notification tasks (email_validation_report, email_success, email_failure) are short and run in parallel depending on pipeline status.
 
-![Airflow DAG Gantt Chart](documents/Airflow_Gantt_Chart.jpeg)
+![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
