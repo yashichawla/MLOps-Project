@@ -13,7 +13,6 @@ from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.operators.email import EmailOperator
  
-# ✅ NEW: we'll call DVC via BashOperator
 from airflow.operators.bash import BashOperator
  
 from scripts.preprocess_salad import run_preprocessing
@@ -47,7 +46,7 @@ DEFAULT_CONFIG = {
     ]
 }
  
-# ✅ NEW: tell DVC which paths to track/push after a successful run.
+# Identify which DVC paths to track/push after a successful run.
 # Adjust to include any directories/files your pipeline updates and you want versioned.
 # DVC_TRACK_PATHS = [
 #     str(OUT_DIR)               # data/processed/
@@ -74,7 +73,7 @@ DVC_TRACK_PATHS = [
 )
 def salad_preprocess_v1():
  
-    # ✅ NEW: Pull the latest versioned inputs from remote at the very start.
+    # Pull the latest versioned inputs from remote at the very start.
     dvc_pull = BashOperator(
         task_id="dvc_pull",
         env={
@@ -138,6 +137,7 @@ def salad_preprocess_v1():
  
     @task
     def ensure_config(paths: dict) -> str:
+        """Ensure config file exists and contains a valid data_sources section."""
         cfg_path = Path(paths["config_path"])
         if not cfg_path.exists():
             with open(cfg_path, "w") as f:
@@ -162,6 +162,7 @@ def salad_preprocess_v1():
  
     @task
     def preprocess_input_csv(paths_and_cfg: tuple[str, str]) -> str:
+        """Run preprocessing if TEST_MODE is off; otherwise return test CSV."""
         cfg_path, out_path = paths_and_cfg
         if TEST_MODE:
             logger.warning(
@@ -256,6 +257,7 @@ def salad_preprocess_v1():
  
     @task(trigger_rule=TriggerRule.ALL_DONE)
     def report_validation_status(metrics: dict | None) -> None:
+        """Log validation outcome (pass, warnings, or hard fail)."""
         if not metrics:
             logger.error("Validation metrics missing (task likely errored). Check logs.")
             return
@@ -270,9 +272,7 @@ def salad_preprocess_v1():
  
     @task
     def enforce_validation_policy(metrics: dict | None) -> None:
-        """
-        Gate the DAG on HARD failures only; keep soft warnings informational.
-        """
+        """Fail the DAG if there are hard validation failures."""
         if not metrics:
             raise AirflowFailException(
                 "Validation metrics missing; validation may have crashed."
