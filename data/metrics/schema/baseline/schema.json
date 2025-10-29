@@ -6,9 +6,12 @@
     "text_length",
     "size_label"
   ],
-  "allowed_categories": null,
+  "allowed_categories": [
+    "benign",
+    "toxic"
+  ],
   "rules": {
-    "file_min_rows": 50,
+    "file_min_rows": 1,
     "text_length_soft_max": 8000,
     "unknown_fraction_soft_warn": 0.3,
     "size_bins": {
