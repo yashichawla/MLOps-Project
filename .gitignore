@@ -1,1 +1,61 @@
-*.env 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.log
+
+# Virtual envs
+venv/
+.venv/
+
+# Local env files
+.env
+.env.*
+
+# Airflow runtime (metadata, logs, webserver config)
+.airflow/
+airflow_home/
+airflow.db*
+webserver_config.py
+airflow_artifacts/
+logs/
+airflow_logs/
+dags/__pycache__/
+scripts/__pycache__/
+
+# Optional: central runtime artifacts folder (see below)
+airflow_artifacts/
+
+# Data outputs
+data/tmp/
+!data/.gitkeep
+!data/**/.gitkeep
+data/validation_reports/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# DVC-managed artifacts and caches
+/data/processed/*
+!/data/processed/*.dvc
+
+# Local secrets
+.secrets/
+
+# Keep config JSONs tracked
+!config/*.json
+
+# (Optional) still ignore random JSONs at repo root only
+/*.json
+
+gcp-key.json
+
+data/metrics/stats
+data/metrics/validation
+# Python cache and compiled files
+__pycache__/
+*.py[cod]

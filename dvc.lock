@@ -1,0 +1,33 @@
+schema: '2.0'
+stages:
+  salad_preprocess:
+    cmd: "python -c \"import os; [os.makedirs(p, exist_ok=True) for p in ('data/stats','data/validation','data/metrics')]\"\
+      \ && python scripts/preprocess_salad.py && python scripts/ge_runner.py validate\n"
+    deps:
+    - path: config/data_sources.json
+      hash: md5
+      md5: f9088691602e8692e265d0ee0dfbf79c
+      size: 174
+    - path: scripts/ge_runner.py
+      hash: md5
+      md5: eacd3955fd8228b08e2ab5f091c3c4c6
+      size: 14926
+    - path: scripts/preprocess_salad.py
+      hash: md5
+      md5: 6f9e9a6000bce70175eb118eda8de8a0
+      size: 9704
+    outs:
+    - path: data/metrics/stats
+      hash: md5
+      md5: e9d533ff56a9e9be0905383bae15d0f7.dir
+      size: 1128
+      nfiles: 1
+    - path: data/metrics/validation
+      hash: md5
+      md5: da47ed2b12a4b87506eaa10ed562b7fd.dir
+      size: 97
+      nfiles: 1
+    - path: data/processed/processed_data.csv
+      hash: md5
+      md5: 170e536ced5ac614761e2c8ade7b966b
+      size: 13295022
