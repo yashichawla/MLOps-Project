@@ -56,3 +56,6 @@ gcp-key.json
 
 data/metrics/stats
 data/metrics/validation
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
