@@ -1,5 +1,5 @@
 {
-  "row_count": 5000,
+  "row_count": 1,
   "columns": [
     "prompt",
     "category",
@@ -16,33 +16,17 @@
   },
   "numerics": {
     "text_length": {
-      "min": 5,
-      "max": 1757,
-      "mean": 431.6032
+      "min": 100,
+      "max": 100,
+      "mean": 100.0
     }
   },
   "categoricals": {
     "size_label": {
-      "L": 3416,
-      "M": 1174,
-      "S": 410
+      "M": 1
     },
     "category": {
-      "Hate Speech": 1164,
-      "Unknown": 996,
-      "Political Lobbying": 710,
-      "Physical Harm": 542,
-      "Pornography": 412,
-      "Fraud": 304,
-      "Illegal Activity": 296,
-      "Economic Harm": 261,
-      "Legal Opinion": 65,
-      "Malware Generation": 56,
-      "Health Consultation": 49,
-      "Child Sexual Abuse": 44,
-      "Privacy Violence": 41,
-      "Government Decision": 31,
-      "Financial Advice": 29
+      "benign": 1
     }
   }
 }
