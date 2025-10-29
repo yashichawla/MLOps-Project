@@ -308,3 +308,21 @@ This document was created specifically for the Data Pipeline assignment submissi
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
+
+**Tests**
+- Covers preprocessing, validation, and DAG structure under `MLOps-Project/tests`.
+- Layout:
+  - `tests/test_preprocess_salad.py` — unit tests for `scripts/preprocess_salad.py` (config loading, cleaning, mapping, metadata, CSV pipeline).
+  - `tests/test_ge_runner.py` — validation behavior tests for `scripts/ge_runner.py`.
+  - `tests/test_pipeline_integration.py` — integration-style checks around GE runner artifacts and policies.
+  - `tests/test_salad_preprocess_dag.py` — Airflow DAG shape tests (tasks, defaults, dependencies).
+  - `tests/requirements.txt` — optional heavy deps for running DAG tests locally.
+- Run:
+  - From repo root: `pytest -q` (uses `pytest.ini` with `testpaths = tests`).
+  - Single file: `pytest MLOps-Project/tests/test_preprocess_salad.py -q`.
+- Airflow DAG tests:
+  - Require Airflow (prefer 2.x). The module `dags/salad_preprocess_dag.py` defines `salad_preprocess_v1()` and exposes `dag`.
+  - If using Airflow 3.x, `DummyOperator` import in the test may not exist; use Airflow 2.x or adjust the import to `airflow.operators.empty.EmptyOperator`.
+- Artifacts:
+  - GE validation tests write JSON to `data/metrics/stats/<date>/stats.json` and `data/metrics/validation/<date>/anomalies.json`.
+  - Tests cleanly create directories as needed; remove generated files if desired.
