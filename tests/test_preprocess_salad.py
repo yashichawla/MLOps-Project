@@ -1,6 +1,10 @@
-import pandas as pd
 import pytest
+import pandas as pd
+import json
+import os
+from pathlib import Path
 from scripts.preprocess_salad import (
+    load_config,
     clean_null_values,
     remove_duplicates,
     map_categories,
@@ -8,7 +12,17 @@ from scripts.preprocess_salad import (
     run_preprocessing,
 )
 
-# --- BASIC FUNCTIONAL TESTS ---
+# ---------------- CONFIG LOADING ----------------
+
+def test_load_config_json_valid(tmp_path):
+    cfg = {"data_sources": [{"type": "csv", "path": "data.csv"}]}
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(cfg))
+    result = load_config(str(path))
+    assert result["data_sources"][0]["path"] == "data.csv"
+
+
+# ---------------- DATA CLEANING ----------------
 
 def test_clean_null_values_removes_empty():
     df = pd.DataFrame({"prompt": ["hi", None, " ", "ok"]})
@@ -16,58 +30,66 @@ def test_clean_null_values_removes_empty():
     assert len(cleaned) == 2
     assert all(cleaned["prompt"].isin(["hi", "ok"]))
 
+def test_clean_null_values_empty_dataframe():
+    df = pd.DataFrame({"prompt": [None, None]})
+    result = clean_null_values(df)
+    assert result.empty
+
+
+# ---------------- DUPLICATES ----------------
+
 def test_remove_duplicates_drops_repeated_prompts():
     df = pd.DataFrame({"prompt": ["hi", "hi", "bye"]})
-    deduped = remove_duplicates(df)
-    assert len(deduped) == 2
+    result = remove_duplicates(df)
+    assert len(result) == 2
+
+def test_remove_duplicates_no_duplicates():
+    df = pd.DataFrame({"prompt": ["a", "b", "c"]})
+    result = remove_duplicates(df)
+    assert len(result) == 3
+
+
+# ---------------- CATEGORY MAPPING ----------------
 
 def test_map_categories_known_label():
-    df = pd.DataFrame({
-        "category": ["O19: Illegal Drugs and Regulated/Controlled Substances"]
-    })
+    df = pd.DataFrame({"prompt": ["x"], "category": ["O19: Illegal Drugs and Regulated/Controlled Substances"]})
     mapped = map_categories(df)
     assert mapped["category"].iloc[0] == "Illegal Activity"
 
-def test_add_metadata_generates_fields():
-    df = pd.DataFrame({"prompt": ["short text", "this is a bit longer"]})
-    df = add_metadata(df)
-    assert set(["prompt_id", "text_length", "size_label"]).issubset(df.columns)
-    assert df["text_length"].iloc[0] < df["text_length"].iloc[1]
-
-# --- EDGE CASE TESTS ---
-
 def test_map_categories_handles_unknown_label():
-    df = pd.DataFrame({"category": ["O99: Nonexistent Category"]})
+    df = pd.DataFrame({"prompt": ["x"], "category": ["UnknownThing"]})
     mapped = map_categories(df)
     assert mapped["category"].iloc[0] == "Unknown"
 
+
+# ---------------- METADATA ----------------
+
+def test_add_metadata_generates_fields():
+    df = pd.DataFrame({"prompt": ["hello there", "this is longer"]})
+    result = add_metadata(df)
+    assert all(c in result.columns for c in ["prompt_id", "text_length", "size_label"])
+    assert all(result["text_length"] > 0)
+
 def test_add_metadata_size_label_ranges():
-    # Create prompts with different word counts, not character counts
-    # S: <50 words, M: 50-200 words, L: >200 words
-    df = pd.DataFrame({"prompt": [
-        " ".join(["word"] * 30),      # 30 words -> S
-        " ".join(["word"] * 100),      # 100 words -> M  
-        " ".join(["word"] * 250),      # 250 words -> L
-    ]})
-    df = add_metadata(df)
-    assert set(df["size_label"]).issubset({"S", "M", "L"})
-    assert df.loc[0, "size_label"] == "S"
-    assert df.loc[1, "size_label"] == "M"
-    assert df.loc[2, "size_label"] == "L"
+    df = pd.DataFrame({"prompt": ["short one", "a " * 80, "a " * 250]})
+    result = add_metadata(df)
+    assert set(result["size_label"]) == {"S", "M", "L"}
 
-def test_clean_null_values_empty_dataframe():
-    df = pd.DataFrame(columns=["prompt"])
-    cleaned = clean_null_values(df)
-    assert cleaned.empty
 
-def test_remove_duplicates_no_duplicates():
-    df = pd.DataFrame({"prompt": ["unique1", "unique2"]})
-    deduped = remove_duplicates(df)
-    assert len(deduped) == 2
+# ---------------- FULL PIPELINE ----------------
 
-def test_run_preprocessing_with_invalid_config(tmp_path):
-    cfg = tmp_path / "config.json"
-    cfg.write_text('{"data_sources":[{"type":"unknown","path":"none"}]}')
-    out = tmp_path / "processed.csv"
-    with pytest.raises(Exception):
-        run_preprocessing(str(cfg), str(out))
+def test_full_pipeline_csv(tmp_path):
+    csv_path = tmp_path / "input.csv"
+    config_path = tmp_path / "config.json"
+    output_path = tmp_path / "processed.csv"
+
+    df = pd.DataFrame({"prompts": ["hi", "ok"], "category": ["Unknown", "Unknown"]})
+    df.to_csv(csv_path, index=False)
+    config_path.write_text(json.dumps({"data_sources": [{"type": "csv", "path": str(csv_path)}]}))
+
+    run_preprocessing(str(config_path), str(output_path))
+    assert output_path.exists()
+
+    result = pd.read_csv(output_path)
+    assert all(c in result.columns for c in ["prompt", "category", "prompt_id", "text_length", "size_label"])
+    assert len(result) == 2

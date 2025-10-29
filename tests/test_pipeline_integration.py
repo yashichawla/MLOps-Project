@@ -1,72 +1,127 @@
-import pandas as pd
 import pytest
-import json
+import pandas as pd
 from pathlib import Path
-from scripts.preprocess_salad import run_preprocessing
-from scripts.validate_salad import validate_output_csv
+from scripts import ge_runner  # keep module import so we can use its constants/helpers
 
-def test_full_pipeline_success(tmp_path):
-    # Create enough data to pass validation (DQ_MIN_ROWS=50)
-    # Note: preprocess_salad.py expects "prompts" (plural) column for non-Salad datasets
-    df = pd.DataFrame({
-        "prompts": [f"prompt_{i}" for i in range(60)],
-        "category": [
-            "O19: Illegal Drugs and Regulated/Controlled Substances",
-            "O8: Racial and Ethnic Stereotyping"
-        ] * 30
-    })
-    raw = tmp_path / "raw.csv"
-    df.to_csv(raw, index=False)
 
-    cfg = tmp_path / "config.json"
-    config_data = {
-        "data_sources": [{"type": "csv", "path": str(raw).replace("\\", "/")}]
-    }
-    with open(cfg, 'w') as f:
-        json.dump(config_data, f)
+# ---------- Helper ----------
+def make_csv(tmp_path, name, data):
+    """Utility to create a small CSV for testing."""
+    path = tmp_path / name
+    pd.DataFrame(data).to_csv(path, index=False)
+    return path
 
-    output = tmp_path / "processed.csv"
-    run_preprocessing(str(cfg), str(output))
-    assert output.exists()
 
-    result = validate_output_csv(str(output), tmp_path)
-    assert result["row_count"] >= 60
-    assert not result["hard_fail"]
+def make_baseline(tmp_path, csv_data):
+    """Creates a valid baseline schema and stats file."""
+    csv_path = make_csv(tmp_path, "baseline_data.csv", csv_data)
+    date_str = "20251028"
+    ge_runner.do_baseline(csv_path, date_str, "benign,toxic")
+    return csv_path, ge_runner.SCHEMA_BASELINE
 
-def test_pipeline_with_missing_config(tmp_path):
-    missing_cfg = tmp_path / "missing.json"
-    output = tmp_path / "processed.csv"
+
+# ---------- Tests ----------
+
+def test_load_df_missing_file(tmp_path):
+    """Should raise FileNotFoundError if the input CSV does not exist."""
+    missing = tmp_path / "missing.csv"
     with pytest.raises(FileNotFoundError):
-        run_preprocessing(str(missing_cfg), str(output))
+        ge_runner._load_df(missing)
 
-def test_pipeline_with_empty_data(tmp_path):
-    csv = tmp_path / "empty.csv"
-    pd.DataFrame(columns=["prompts", "category"]).to_csv(csv, index=False)
-    cfg = tmp_path / "config.json"
-    config_data = {
-        "data_sources": [{"type": "csv", "path": str(csv).replace("\\", "/")}]
-    }
-    with open(cfg, 'w') as f:
-        json.dump(config_data, f)
-    output = tmp_path / "processed.csv"
-    run_preprocessing(str(cfg), str(output))
-    result = validate_output_csv(str(output), tmp_path)
-    assert result["hard_fail"]
 
-def test_pipeline_with_invalid_category(tmp_path):
-    df = pd.DataFrame({
-        "prompts": ["bad prompt"],
-        "category": ["O999: Made-up category"]
-    })
-    raw = tmp_path / "raw.csv"
-    df.to_csv(raw, index=False)
-    cfg = tmp_path / "config.json"
-    config_data = {
-        "data_sources": [{"type": "csv", "path": str(raw).replace("\\", "/")}]
+def test_empty_file_triggers_hard_fail(tmp_path):
+    """Empty CSV should cause a hard fail (SystemExit)."""
+    # Instead of empty CSV (which crashes pandas), make one with only header
+    path = tmp_path / "empty.csv"
+    path.write_text("prompt,category,prompt_id,text_length,size_label\n")
+
+    baseline_data = {"prompt": ["x"], "category": ["benign"], "prompt_id": [1], "text_length": [10], "size_label": ["S"]}
+    _, baseline_path = make_baseline(tmp_path, baseline_data)
+
+    with pytest.raises(SystemExit):
+        ge_runner.do_validate(path, baseline_path, "20251028", "benign,toxic")
+
+
+def test_missing_required_columns(tmp_path):
+    """Missing required columns should cause a hard fail (SystemExit)."""
+    data = {"prompt": ["x"], "category": ["benign"]}
+    csv_path = make_csv(tmp_path, "missing_cols.csv", data)
+
+    baseline_data = {"prompt": ["a"], "category": ["benign"], "prompt_id": [1], "text_length": [10], "size_label": ["S"]}
+    _, baseline_path = make_baseline(tmp_path, baseline_data)
+
+    with pytest.raises(SystemExit):
+        ge_runner.do_validate(csv_path, baseline_path, "20251028", "benign,toxic")
+
+
+def test_duplicate_prompts_soft_warn(tmp_path):
+    """Duplicate prompts should only soft-warn (no SystemExit)."""
+    old_min_rows = ge_runner.MIN_ROWS_HARD
+    ge_runner.MIN_ROWS_HARD = 1  # temporarily relax row limit
+    
+    try:
+        data = {
+            "prompt": ["hi", "hi"],
+            "category": ["benign", "benign"],
+            "prompt_id": [1, 2],
+            "text_length": [20, 25],
+            "size_label": ["S", "S"],
+        }
+        csv_path = make_csv(tmp_path, "dupes.csv", data)
+        baseline_data = {"prompt": ["a"], "category": ["benign"], "prompt_id": [1], "text_length": [10], "size_label": ["S"]}
+        _, baseline_path = make_baseline(tmp_path, baseline_data)
+
+        # Should NOT raise SystemExit, just create artifacts with a soft warn recorded
+        ge_runner.do_validate(csv_path, baseline_path, "20251028", "benign,toxic")
+
+        anomalies_path = ge_runner.METRICS_DIR / "validation" / "20251028" / "anomalies.json"
+        assert anomalies_path.exists(), "Anomalies JSON not written"
+        assert anomalies_path.stat().st_size > 0, "Anomalies file is empty"
+    finally:
+        ge_runner.MIN_ROWS_HARD = old_min_rows  # restore
+
+
+def test_invalid_category_hard_fail(tmp_path):
+    """Invalid category outside allowed list should cause hard fail (SystemExit)."""
+    data = {
+        "prompt": ["p1"],
+        "category": ["invalid_label"],
+        "prompt_id": [1],
+        "text_length": [40],
+        "size_label": ["S"],
     }
-    with open(cfg, 'w') as f:
-        json.dump(config_data, f)
-    output = tmp_path / "processed.csv"
-    run_preprocessing(str(cfg), str(output))
-    result = validate_output_csv(str(output), tmp_path)
-    assert "Unknown" in pd.read_csv(output)["category"].iloc[0]
+    csv_path = make_csv(tmp_path, "invalid_category.csv", data)
+
+    baseline_data = {"prompt": ["a"], "category": ["benign"], "prompt_id": [1], "text_length": [10], "size_label": ["S"]}
+    _, baseline_path = make_baseline(tmp_path, baseline_data)
+
+    with pytest.raises(SystemExit):
+        ge_runner.do_validate(csv_path, baseline_path, "20251028", "benign,toxic")
+
+
+def test_artifacts_written(tmp_path):
+    """Ensure stats and anomaly JSON files are created after validation."""
+    old_min_rows = ge_runner.MIN_ROWS_HARD
+    ge_runner.MIN_ROWS_HARD = 1  # temporarily relax row limit
+    
+    try:
+        data = {
+            "prompt": ["a"],
+            "category": ["benign"],
+            "prompt_id": [1],
+            "text_length": [100],
+            "size_label": ["M"],
+        }
+        csv_path = make_csv(tmp_path, "artifacts.csv", data)
+        _, baseline_path = make_baseline(tmp_path, data)
+
+        # Should complete successfully (no SystemExit)
+        ge_runner.do_validate(csv_path, baseline_path, "20251028", "benign,toxic")
+
+        stats_path = ge_runner.METRICS_DIR / "stats" / "20251028" / "stats.json"
+        anomalies_path = ge_runner.METRICS_DIR / "validation" / "20251028" / "anomalies.json"
+
+        assert stats_path.exists(), "Stats file missing"
+        assert anomalies_path.exists(), "Anomalies file missing"
+    finally:
+        ge_runner.MIN_ROWS_HARD = old_min_rows  # restore
