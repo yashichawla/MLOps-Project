@@ -1,5 +1,6 @@
 # Break The Bot
 
+Find a Project Brief and Overview, see [project_overview.md](./project_overview.md)
 ## 1. Quick Setup & Run Instructions
 
 Follow these steps in order to set up and run the complete project end-to-end.
@@ -216,4 +217,5 @@ Located in /documents/bias_detection_mitigation.md — explains bias definition,
   - Single file: `pytest MLOps-Project/tests/test_preprocess_salad.py -q`.
 - Artifacts:
   - GE validation tests write JSON to `data/metrics/stats/<date>/stats.json` and `data/metrics/validation/<date>/anomalies.json`.
+
 
