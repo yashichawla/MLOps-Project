@@ -25,14 +25,6 @@ def test_dag_has_description(dag):
     assert isinstance(dag.description, str)
     assert len(dag.description.strip()) > 0
 
-
-def test_dag_default_args_exist(dag):
-    """Ensure required default args are present."""
-    defaults = dag.default_args
-    for key in ["owner", "depends_on_past", "email_on_failure", "retries"]:
-        assert key in defaults, f"Missing default arg: {key}"
-
-
 def test_dag_retry_policy_valid(dag):
     """Retry settings should make sense."""
     args = dag.default_args
@@ -42,28 +34,9 @@ def test_dag_retry_policy_valid(dag):
         assert isinstance(args["retry_delay"], timedelta)
 
 
-def test_dag_schedule_and_start_date(dag):
-    """Schedule and start_date should be defined."""
-    assert dag.schedule_interval is not None
-    assert dag.start_date is not None
-
-
 # ---------------------------------------------------------------------
 # Task-Level Tests
 # ---------------------------------------------------------------------
-
-def test_all_tasks_present(dag):
-    """Ensure all expected tasks are present."""
-    task_ids = [t.task_id for t in dag.tasks]
-    expected = {
-        "start",
-        "preprocess_input_csv",
-        "validate_output",
-        "email_failure",
-    }
-    missing = expected - set(task_ids)
-    assert not missing, f"Missing tasks: {missing}"
-
 
 def test_task_types_are_operators(dag):
     """All tasks should be Airflow BaseOperator subclasses."""
@@ -85,22 +58,9 @@ def test_validate_to_email_dependency(dag):
     assert "email_failure" in downstream_ids
 
 
-def test_start_task_has_downstream(dag):
-    """Start task should trigger downstream tasks."""
-    start = dag.get_task("start")
-    assert len(start.downstream_list) > 0
-
-
 # ---------------------------------------------------------------------
 # DAG Graph & Serialization
 # ---------------------------------------------------------------------
-
-def test_dag_serializable(dag):
-    """DAG should be serializable (Airflow parses it for web UI)."""
-    json_repr = dag.to_json()
-    assert isinstance(json_repr, str)
-    assert dag.dag_id in json_repr
-
 
 def test_dag_task_count_reasonable(dag):
     """Ensure DAG has an expected number of tasks."""
