@@ -11,3 +11,5 @@ tqdm>=4.66.0
 gcsfs==2023.10.0
 dvc[gs]>=3.0.0
 # tests are not needed inside the runtime image, omit pytest here
+# Data validation - compulsory, pinned to working version
+great_expectations==0.18.21  # Pin to v0.18.21 for PandasDataset API compatibility
