@@ -1,6 +1,6 @@
 # Break The Bot
 
-Find a Project Brief and Overview, see [project_overview.md](./project_overview.md)
+Find project overview, see [project_overview.md](./project_overview.md)
 ## 1. Quick Setup & Run Instructions
 
 Follow these steps in order to set up and run the complete project end-to-end.
@@ -118,7 +118,7 @@ MLOps-Project/
 
 ## 4. Email Notifications
 
-The DAG now uses the unified validator’s XCom output for all emails:
+The DAG uses the unified validator’s XCom output for all emails:
 
 | Trigger    | Email                 | Contents                         |
 | ---------- | --------------------- | -------------------------------- |
@@ -126,9 +126,8 @@ The DAG now uses the unified validator’s XCom output for all emails:
 | On Success | **✅ DAG Succeeded**  | Summary of counts and ranges     |
 | On Failure | **❌ DAG Failed**     | Hard-fail reasons + report paths |
 
-Recipients are configured in `salad_preprocess_dag.py` under each `EmailOperator`.
+Recipients are configured in `salad_preprocess_dag.py` under each `EmailOperator`, to add more recipients:
 
-To add more recipients, edit in salad_preprocess_dag.py:
 
 ```bash
 to=["yashi.chawla1@gmail.com", "...", "..."]
@@ -136,7 +135,7 @@ to=["yashi.chawla1@gmail.com", "...", "..."]
 
 ## 5. Validation Source of Truth
 
-- `scripts/ge_runner.py` is the single validator used by the Airflow DAG.
+- `scripts/ge_runner.py` is the validator used by the Airflow DAG.
 - The DAG invokes:
   - `python scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` if missing)
   - `python scripts/ge_runner.py validate --input <csv> --baseline_schema <path> --date YYYYMMDD`
@@ -211,11 +210,17 @@ Located in /documents/bias_detection_mitigation.md — explains bias definition,
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
 ## 9. Tests
-- Covers preprocessing, validation, and DAG structure under `MLOps-Project/tests`.
-- Run:
-  - From repo root: `pytest -q` (uses `pytest.ini` with `testpaths = tests`).
-  - Single file: `pytest MLOps-Project/tests/test_preprocess_salad.py -q`.
-- Artifacts:
-  - GE validation tests write JSON to `data/metrics/stats/<date>/stats.json` and `data/metrics/validation/<date>/anomalies.json`.
+Usage:
+To run the test suite, from repository root( uses `pytest.ini` with `testpaths = tests`):
+```bash
+pytest -q
+```
+
+To execute a single file: 
+```bash
+pytest MLOps-Project/tests/test_preprocess_salad.py -q
+```
+Artifacts: GE validation tests write JSON to `data/metrics/stats/<date>/stats.json` and `data/metrics/validation/<date>/anomalies.json`.
+
 
 
