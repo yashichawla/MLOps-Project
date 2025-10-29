@@ -200,6 +200,10 @@ def salad_preprocess_v1():
                     ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
                     check=False,
                 )
+            subprocess.run(
+                    ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
+                    check=False,
+                )
             res = subprocess.run(
                 [
                     "python", str(SCRIPT_GE), "validate", "--input", out_csv_path,
