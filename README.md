@@ -216,7 +216,7 @@ Steps (one-time):
 
 ```yaml
 volumes:
-  - ./.secrets/gcp-dvc-key.json:/opt/airflow/secrets/gcp-key.json:ro
+  - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
 environment:
   GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
 ```
@@ -307,3 +307,4 @@ This document was created specifically for the Data Pipeline assignment submissi
 - Notification tasks (email_validation_report, email_success, email_failure) are short and run in parallel depending on pipeline status.
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
+
