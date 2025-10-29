@@ -186,79 +186,89 @@ def salad_preprocess_v1():
     @task
     def validate_output(out_csv_path: str) -> dict:
         """
-        Single source of truth:
-        1) Run pandas validator -> returns metrics dict for emails/gating.
-        2) Sidecar: run GE baseline (if missing) and GE validate to emit extra artifacts.
-            GE outputs never gate the DAG; failures are logged but ignored here.
+        Run Great Expectations validation (compulsory).
+        GE baseline and validation are required; failures will cause DAG to fail.
+        Returns metrics dict for emails/gating.
         """
 
-        # 1) Run GE baseline (if missing) and GE validate (non-blocking); GE is the source of truth
+        # 1) Run GE baseline (if missing) and GE validate (compulsory)
         ds_nodash = get_current_context()["ds_nodash"]
         try:
             if not BASELINE_SCHEMA.exists():
+                logger.info("Creating baseline schema at %s", BASELINE_SCHEMA)
                 subprocess.run(
                     ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
-                    check=False,
+                    check=True,
                 )
-            subprocess.run(
-                    ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
-                    check=False,
-                )
+            
+            logger.info("Running GE validation for %s", out_csv_path)
             res = subprocess.run(
                 [
                     "python", str(SCRIPT_GE), "validate", "--input", out_csv_path,
                     "--baseline_schema", str(BASELINE_SCHEMA), "--date", ds_nodash,
                 ],
-                check=False,
+                check=False,  # We check returncode manually to handle validation failures
             )
-            if res.returncode not in (0, 1):
-                logger.warning("GE validate returned code %s", res.returncode)
+            
+            # GE validation returns:
+            # - 0: validation passed
+            # - 1: validation hard failed (hard_fail reasons exist)
+            # - 2: baseline schema missing or other error
+            if res.returncode == 1:
+                raise AirflowFailException(
+                    f"Great Expectations validation failed (hard fail). "
+                    f"Check validation report at {METRICS_DIR / 'validation' / ds_nodash / 'anomalies.json'}"
+                )
+            elif res.returncode != 0:
+                raise AirflowFailException(
+                    f"Great Expectations validation returned unexpected exit code {res.returncode}. "
+                    f"Check logs for details."
+                )
+        except subprocess.CalledProcessError as e:
+            raise AirflowFailException(
+                f"Great Expectations validation subprocess failed: {e}. "
+                f"Ensure great_expectations==0.18.21 is installed."
+            ) from e
         except Exception as e:
-            logger.warning("GE validation invocation failed (non-blocking): %s", e)
+            raise AirflowFailException(
+                f"Great Expectations validation invocation failed: {e}"
+            ) from e
 
         # 2) Read GE-produced artifacts as the single source of metrics
+        # GE validation must produce these artifacts - fail if they don't exist
         anomalies_path = METRICS_DIR / "validation" / ds_nodash / "anomalies.json"
         stats_path = METRICS_DIR / "stats" / ds_nodash / "stats.json"
+        
+        if not stats_path.exists():
+            raise AirflowFailException(
+                f"Great Expectations validation artifacts missing: {stats_path} not found. "
+                f"GE validation must produce stats.json."
+            )
+        if not anomalies_path.exists():
+            raise AirflowFailException(
+                f"Great Expectations validation artifacts missing: {anomalies_path} not found. "
+                f"GE validation must produce anomalies.json."
+            )
+        
+        # Read artifacts - fail if reading fails
+        with open(stats_path) as f:
+            s = json.load(f)
+        with open(anomalies_path) as f:
+            a = json.load(f)
+        
         metrics = {
-            "row_count": 0,
-            "null_prompt_count": None,
-            "dup_prompt_count": None,
-            "unknown_category_rate": None,
-            "text_len_min": None,
-            "text_len_max": None,
-            "size_label_mismatch_count": None,
-            "hard_fail": [],
-            "soft_warn": [],
+            "row_count": s.get("row_count", 0),
+            "null_prompt_count": s.get("null_prompt_count"),
+            "dup_prompt_count": s.get("dup_prompt_count"),
+            "unknown_category_rate": s.get("unknown_category_rate"),
+            "text_len_min": s.get("text_len_min"),
+            "text_len_max": s.get("text_len_max"),
+            "size_label_mismatch_count": s.get("size_label_mismatch_count"),
+            "hard_fail": a.get("hard_fail", []),
+            "soft_warn": a.get("soft_warn", []),
             "report_paths": [str(anomalies_path), str(stats_path)],
         }
-        try:
-            if stats_path.exists():
-                with open(stats_path) as f:
-                    s = json.load(f)
-                metrics.update(
-                    {
-                        "row_count": s.get("row_count", 0),
-                        "null_prompt_count": s.get("null_prompt_count"),
-                        "dup_prompt_count": s.get("dup_prompt_count"),
-                        "unknown_category_rate": s.get("unknown_category_rate"),
-                        "text_len_min": s.get("text_len_min"),
-                        "text_len_max": s.get("text_len_max"),
-                        "size_label_mismatch_count": s.get("size_label_mismatch_count"),
-                    }
-                )
-            if anomalies_path.exists():
-                with open(anomalies_path) as f:
-                    a = json.load(f)
-                metrics.update(
-                    {
-                        "hard_fail": a.get("hard_fail", []),
-                        "soft_warn": a.get("soft_warn", []),
-                    }
-                )
-        except Exception as e:
-            logger.warning("Failed to read GE artifacts: %s", e)
-
-        # Always return metrics for downstream report/enforce/email
+        
         return metrics
 
     @task(trigger_rule=TriggerRule.ALL_DONE)
@@ -291,7 +301,7 @@ def salad_preprocess_v1():
 
     email_validation_report = EmailOperator(
         task_id="email_validation_report",
-        to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
+        to=["athatalnikar@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] Validation Report",
         html_content="""
             <h3>Validation Report for {{ dag.dag_id }}</h3>
@@ -310,7 +320,7 @@ def salad_preprocess_v1():
 
     email_success = EmailOperator(
         task_id="email_success",
-        to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
+        to=["athatalnikar@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ✅ DAG Succeeded",
         html_content="""
             <h3>DAG Succeeded: {{ dag.dag_id }}</h3>
@@ -331,7 +341,7 @@ def salad_preprocess_v1():
 
     email_failure = EmailOperator(
         task_id="email_failure",
-        to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
+        to=["athatalnikar@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ DAG Failed",
         html_content="""
             <h3>DAG Failed: {{ dag.dag_id }}</h3>
