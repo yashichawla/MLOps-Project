@@ -99,7 +99,7 @@ cd MLOps-Project
 - Week 7-8: Dashboards, monitoring, failure analysis.
 - Week 9-10: CI/CD gates, final validation, and reporting.
 
-### Setting up and running airflow w Docker (recommended)
+### Setting up and running Airflow (with Docker)
 
 ```bash
 # Navigate to project root
@@ -145,14 +145,6 @@ Use this when you want to skip preprocessing and only validate a CSV.
 In the Airflow UI, open Admin → Variables, and set TEST_MODE to true to activate test mode.
 
 #### DAG flow
-
-preprocess_input_csv
-└── validate_output # runs GE validator
-├── report_validation_status (logs)
-├── enforce_validation_policy (fails on hard errors)
-├── email_validation_report (always)
-├── email_success (if all pass)
-└── email_failure (if any fail)
 
 ![DAG Pipeline Architecture](documents/DAG_Pipeline.jpg)
 
