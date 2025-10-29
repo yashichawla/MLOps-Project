@@ -1,0 +1,14 @@
+{
+  "data_sources": [
+    {
+      "type": "hf",
+      "name": "OpenSafetyLab/Salad-Data",
+      "config": "attack_enhanced_set",
+      "split": "train"
+    },
+    {
+      "type": "csv",
+      "path": "data/local_dataset.csv"
+    }
+  ]
+}

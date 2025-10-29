@@ -1,1 +1,26 @@
- 
+# Core dependencies
+numpy==1.26.4          # Latest stable NumPy < 2.0 (compatible with pandas & scipy)
+scipy==1.11.2          # Compatible with NumPy 1.26
+pandas==2.1.1          # Stable with NumPy 1.x
+
+# HuggingFace datasets
+datasets==2.16.1
+fsspec==2023.10.0
+
+# Utility libraries
+tqdm>=4.66.0           # Progress bars
+pyarrow>=16.0.0        # Required for Parquet read/write
+
+# Testing
+pytest>=8.0.0
+
+#dvc
+# dvc[gcs]>=3.0.0
+gcsfs==2023.10.0
+dvc[gs]>=3.0.0
+
+# Data validation alternative
+great_expectations>=0.18
+
+apache-airflow==2.10.4
+structlog<24.0.0
