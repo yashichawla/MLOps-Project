@@ -209,7 +209,7 @@ This setup uses a GCP service account key mounted securely into the Airflow cont
 
 Steps (one-time):
 
-1. Place your service account key JSON inside:
+1. Place the service account key JSON (provided by us in Canvas Submission Comments) inside. :
    .secrets/gcp-key.json
 
 2. The Docker Compose file mounts it automatically:
@@ -307,4 +307,5 @@ This document was created specifically for the Data Pipeline assignment submissi
 - Notification tasks (email_validation_report, email_success, email_failure) are short and run in parallel depending on pipeline status.
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
+
 
