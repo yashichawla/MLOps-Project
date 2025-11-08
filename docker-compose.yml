@@ -36,7 +36,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
       - ./airflow_artifacts/logs:/opt/airflow/logs
-      - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
+      - ./.secrets:/opt/airflow/secrets:ro
     working_dir: /opt/airflow/app
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
@@ -78,7 +78,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
       - ./airflow_artifacts/logs:/opt/airflow/logs
-      - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
+      - ./.secrets:/opt/airflow/secrets:ro
     working_dir: /opt/airflow/app
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
@@ -121,7 +121,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./:/opt/airflow/app
       - ./airflow_artifacts/logs:/opt/airflow/logs
-      - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
+      - ./.secrets:/opt/airflow/secrets:ro
     working_dir: /opt/airflow/app
     command: >
       bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
