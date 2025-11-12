@@ -3,7 +3,7 @@
 A new script has been added to generate model responses for prompts in the processed SALAD dataset.
 
 Script: `scripts/generate_model_responses.py`  
-Output file: `data/processed/model_responses.csv`
+Output file: `data/processed/model_responses_<model>.csv`
 
 Note: The script requires `HF_TOKEN` in `.env`. Generate a **read-only** token at https://huggingface.co/settings/tokens and add `HF_TOKEN=hf_xxx`.
 
