@@ -138,13 +138,27 @@ docker compose down -v       # removes DB volume
 rm -rf airflow_artifacts/logs/*
 ```
 
-### Airflow Test Mode (Validation-only workfflow)
+### Airflow Test Mode (Validation-only workflow)
 
 Use this when you want to skip preprocessing and only validate a CSV.
 
-In the Airflow UI, open Admin → Variables, and set TEST_MODE to true to activate test mode.
+In the Airflow UI, open Admin → Variables, and set:
+- `TEST_MODE` to `true` to activate test mode (default: `false`)
+- `TEST_CSV_PATH` to the path of your test CSV (default: `data/test_validation/test.csv`)
+
+When TEST_MODE is enabled, the DAG skips preprocessing and validates the CSV specified in TEST_CSV_PATH instead.
 
 #### DAG flow
+
+**Task Dependency Sequence:**
+```
+dvc_pull → ensure_dirs → ensure_config → preprocess_input_csv → validate_output → [report_validation_status, enforce_validation_policy] → (on success) dvc_push → email_success
+```
+
+**Email Task Triggers:**
+- `email_validation_report`: Always runs after validation completes (TriggerRule.ALL_DONE)
+- `email_success`: Runs only if all tasks succeed (TriggerRule.ALL_SUCCESS)
+- `email_failure`: Runs if any task in the core path fails (TriggerRule.ONE_FAILED)
 
 ![DAG Pipeline Architecture](documents/DAG_Pipeline.jpg)
 
@@ -152,11 +166,12 @@ In the Airflow UI, open Admin → Variables, and set TEST_MODE to true to activa
 
 - `scripts/ge_runner.py` is the single validator used by the Airflow DAG.
 - The DAG invokes:
-  - `python scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` if missing)
+  - `python scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` and `data/metrics/stats/baseline/stats.json` if missing; baseline stats.json is used for drift detection in subsequent validations)
   - `python scripts/ge_runner.py validate --input <csv> --baseline_schema <path> --date YYYYMMDD`
+- **Note:** Baseline is automatically created if missing during the first validation run.
 - Validation artifacts (source of truth):
   - `data/metrics/stats/YYYYMMDD/stats.json` (includes row_count, null/dup counts, unknown_category_rate, text_len_min/max, size_label_mismatch_count)
-  - `data/metrics/validation/YYYYMMDD/anomalies.json` (hard_fail, soft_warn, info)
+  - `data/metrics/validation/YYYYMMDD/anomalies.json` (contains metadata, summary, hard_fail, and soft_warn sections; metadata includes validation timestamp/source, summary includes validation_status and counts)
 - Airflow reads these files to construct the XCom metrics used for gating and email reports.
 
 ### SMTP Setup (Gmail)
@@ -170,20 +185,25 @@ AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Generate Google App Password (
 
 ## 📧 Email Notifications (automatic)
 
-The DAG now uses the unified validator’s XCom output for all emails:
+The DAG now uses the unified validator's XCom output for all emails:
 
-| Trigger    | Email                 | Contents                         |
-| ---------- | --------------------- | -------------------------------- |
-| Always     | **Validation Report** | JSON report + anomalies attached |
-| On Success | **✅ DAG Succeeded**  | Summary of counts and ranges     |
-| On Failure | **❌ DAG Failed**     | Hard-fail reasons + report paths |
+| Trigger    | Email                 | Contents                         | Trigger Rule        |
+| ---------- | --------------------- | -------------------------------- | ------------------- |
+| Always     | **Validation Report** | JSON report + anomalies attached | ALL_DONE (runs regardless of task status) |
+| On Success | **✅ DAG Succeeded**  | Summary of counts and ranges     | ALL_SUCCESS (only if all upstream tasks succeed) |
+| On Failure | **❌ DAG Failed**     | Hard-fail reasons + report paths | ONE_FAILED (if any upstream task fails) |
+
+**Trigger Rules Explained:**
+- `ALL_DONE`: Task runs regardless of upstream task status (used for validation report)
+- `ALL_SUCCESS`: Task runs only if all upstream tasks succeed (used for success email)
+- `ONE_FAILED`: Task runs if any upstream task fails (used for failure email)
 
 Recipients are configured in `salad_preprocess_dag.py` under each `EmailOperator`.
 
 To add more recipients, edit in salad_preprocess_dag.py:
 
 ```bash
-to=["yashi.chawla1@gmail.com", "...", "..."]
+to=["athatalnikar@gmail.com", "additional@email.com", "..."]
 ```
 
 ## 🧩 DVC Setup & Usage Guide
@@ -197,8 +217,8 @@ DVC is used to track and version the following pipeline outputs:
 
 ```text
 data/processed/processed_data.csv
-data/stats/
-data/validation/
+data/metrics/stats
+data/metrics/validation
 ```
 
 These are stored remotely in a GCS bucket and automatically synchronized through Airflow tasks (dvc pull / dvc push) running inside Docker.
@@ -302,9 +322,9 @@ This document was created specifically for the Data Pipeline assignment submissi
 - The DAG starts with dvc_pull, which is the longest-running task (~15s) since it fetches tracked data from remote storage.
 - Set up tasks like ensure_dirs and ensure_config complete quickly (a few seconds each).
 - preprocess_input_csv and validate_output are moderate in duration, taking several seconds depending on the dataset size.
-- Validation follow-ups (report_validation_status, enforce_validation_policy) run almost instantly after validation completes.
+- Validation follow-ups (report_validation_status, enforce_validation_policy) run in parallel almost instantly after validation completes.
 - dvc_push is another longer task (~10–12s) as it uploads outputs and validation reports back to remote storage.
-- Notification tasks (email_validation_report, email_success, email_failure) are short and run in parallel depending on pipeline status.
+- Notification tasks: email_validation_report always runs after validation; email_success runs only on full success; email_failure runs if any task fails.
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 

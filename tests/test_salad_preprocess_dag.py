@@ -1,6 +1,29 @@
 import pytest
-from airflow.models import DAG, BaseOperator
-from dags import salad_preprocess_dag
+
+# Try to import Airflow, skip all tests if not available
+try:
+    from airflow.models import DAG, BaseOperator
+    from airflow.utils.dates import days_ago
+    from airflow.operators.dummy import DummyOperator
+    AIRFLOW_AVAILABLE = True
+except ImportError:
+    AIRFLOW_AVAILABLE = False
+    # Create dummy classes to avoid NameError
+    DAG = None
+    BaseOperator = None
+    days_ago = None
+    DummyOperator = None
+
+pytestmark = pytest.mark.skipif(
+    not AIRFLOW_AVAILABLE,
+    reason="Airflow is not installed. Install test requirements: pip install -r tests/requirements.txt"
+)
+
+# Only import DAG module if Airflow is available
+if AIRFLOW_AVAILABLE:
+    from dags import salad_preprocess_dag
+else:
+    salad_preprocess_dag = None
 
 
 @pytest.fixture(scope="module")
@@ -112,18 +135,15 @@ def test_task_retry_and_email_settings(dag):
 
 def test_dag_context_manager_construction():
     """DAG can be built as context manager without errors."""
-    from airflow.utils.dates import days_ago
-    from airflow.operators.dummy import DummyOperator
-
     with DAG(
         dag_id="context_dag_test",
         start_date=days_ago(1),
         schedule_interval="@daily",
         catchup=False,
-    ) as dag:
+    ) as test_dag:
         start = DummyOperator(task_id="start")
         end = DummyOperator(task_id="end")
         start >> end
 
-    assert isinstance(dag, DAG)
-    assert "start" in [t.task_id for t in dag.tasks]
+    assert isinstance(test_dag, DAG)
+    assert "start" in [t.task_id for t in test_dag.tasks]
