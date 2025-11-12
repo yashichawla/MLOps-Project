@@ -1,17 +1,18 @@
 # dags/salad_preprocess_dag.py
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os, subprocess
 import json
 import logging
 
 from airflow.decorators import dag, task, setup
-from airflow.operators.python import get_current_context
-from airflow.exceptions import AirflowFailException
+from airflow.operators.python import get_current_context, PythonOperator
+from airflow.exceptions import AirflowFailException, AirflowSkipException
 from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.operators.email import EmailOperator
+from airflow.utils.email import send_email_smtp
 
 from airflow.operators.bash import BashOperator
 
@@ -56,6 +57,45 @@ DVC_TRACK_PATHS = [
     "data/processed",
     "airflow_artifacts/reports",
 ]
+
+
+def send_email_with_conditional_files(
+    to: list[str],
+    subject: str,
+    html_content: str,
+    file_paths: list[str] | None = None,
+) -> None:
+    """
+    Helper function to send emails with conditional file attachments.
+    Only attaches files that actually exist.
+    """
+    try:
+        # Filter out non-existent files
+        existing_files = []
+        if file_paths:
+            for file_path in file_paths:
+                if file_path and file_path.strip():
+                    file_path_obj = Path(file_path)
+                    # Convert relative paths to absolute using REPO_ROOT
+                    if not file_path_obj.is_absolute():
+                        file_path_obj = REPO_ROOT / file_path_obj
+                    if file_path_obj.exists() and file_path_obj.is_file():
+                        existing_files.append(str(file_path_obj))
+                        logger.info(f"Email attachment file found: {file_path_obj}")
+                    else:
+                        logger.warning(f"Email attachment file does not exist, skipping: {file_path_obj}")
+        
+        # Send email with only existing files
+        send_email_smtp(
+            to=to,
+            subject=subject,
+            html_content=html_content,
+            files=existing_files if existing_files else None,
+        )
+        logger.info(f"Email sent successfully to {to} with {len(existing_files) if existing_files else 0} attachment(s)")
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}", exc_info=True)
+        raise  # Re-raise so the task can handle it
 
 
 @dag(
@@ -183,85 +223,196 @@ def salad_preprocess_v1():
         logger.info("Preprocessing complete. Output at %s", out_path)
         return out_path
 
+    # Define GE validation paths before validate_output task uses them
+    SCRIPT_GE = REPO_ROOT / "scripts" / "ge_runner.py"
+    METRICS_DIR = DATA_DIR / "metrics"
+    BASELINE_SCHEMA = METRICS_DIR / "schema" / "baseline" / "schema.json"
+
     @task
     def validate_output(out_csv_path: str) -> dict:
         """
-        Single source of truth:
-        1) Run pandas validator -> returns metrics dict for emails/gating.
-        2) Sidecar: run GE baseline (if missing) and GE validate to emit extra artifacts.
-            GE outputs never gate the DAG; failures are logged but ignored here.
+        Run Great Expectations validation (compulsory).
+        GE baseline and validation are required; failures will cause DAG to fail.
+        Returns metrics dict for emails/gating.
         """
 
-        # 1) Run GE baseline (if missing) and GE validate (non-blocking); GE is the source of truth
+        # 1) Run GE baseline (if missing) and GE validate (compulsory)
         ds_nodash = get_current_context()["ds_nodash"]
+        anomalies_path = METRICS_DIR / "validation" / ds_nodash / "anomalies.json"
+        stats_path = METRICS_DIR / "stats" / ds_nodash / "stats.json"
+        
+        def _create_fallback_anomalies(error_type: str, error_message: str, exit_code: int | None = None) -> None:
+            """Create a fallback anomalies.json when validation fails before GE script creates it."""
+            if not anomalies_path.exists():
+                fallback_anomalies = {
+                    "hard_fail": [f"{error_type}: {error_message}"],
+                    "soft_warn": [],
+                    "metadata": {
+                        "validation_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "validation_source": "airflow_fallback",
+                        "error_type": error_type,
+                        "exit_code": exit_code,
+                    },
+                    "summary": {
+                        "validation_status": "hard_fail",
+                        "total_rows": 0,
+                        "hard_fail_count": 1,
+                        "soft_warn_count": 0,
+                    }
+                }
+                anomalies_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(anomalies_path, "w") as f:
+                    json.dump(fallback_anomalies, f, indent=2)
+                logger.warning("Created fallback anomalies.json due to validation failure: %s", error_message)
+        
         try:
             if not BASELINE_SCHEMA.exists():
+                logger.info("Creating baseline schema at %s", BASELINE_SCHEMA)
                 subprocess.run(
                     ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
-                    check=False,
+                    check=True,
                 )
-            subprocess.run(
-                    ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
-                    check=False,
-                )
+            
+            logger.info("Running GE validation for %s", out_csv_path)
             res = subprocess.run(
                 [
                     "python", str(SCRIPT_GE), "validate", "--input", out_csv_path,
                     "--baseline_schema", str(BASELINE_SCHEMA), "--date", ds_nodash,
                 ],
-                check=False,
+                check=False,  # We check returncode manually to handle validation failures
             )
-            if res.returncode not in (0, 1):
-                logger.warning("GE validate returned code %s", res.returncode)
+            
+            # GE validation returns:
+            # - 0: validation passed
+            # - 1: validation hard failed (hard_fail reasons exist) - GE script creates anomalies.json
+            # - 2: baseline schema missing or other error - GE script may not create anomalies.json
+            if res.returncode == 1:
+                # Exit code 1 means validation failed but GE script should have created anomalies.json
+                # Check if it exists, if not create fallback
+                if not anomalies_path.exists():
+                    _create_fallback_anomalies(
+                        "ValidationHardFail",
+                        "Great Expectations validation failed (hard fail). GE script exited with code 1 but did not create anomalies.json.",
+                        exit_code=1
+                    )
+                raise AirflowFailException(
+                    f"Great Expectations validation failed (hard fail). "
+                    f"Check validation report at {anomalies_path}"
+                )
+            elif res.returncode == 2:
+                # Exit code 2 means baseline schema missing or other error
+                _create_fallback_anomalies(
+                    "BaselineSchemaError",
+                    f"Baseline schema missing or validation script error. Exit code: {res.returncode}",
+                    exit_code=2
+                )
+                raise AirflowFailException(
+                    f"Great Expectations validation returned exit code {res.returncode} (baseline schema missing or other error). "
+                    f"Check logs for details."
+                )
+            elif res.returncode != 0:
+                # Unexpected exit code
+                _create_fallback_anomalies(
+                    "UnexpectedExitCode",
+                    f"Great Expectations validation returned unexpected exit code {res.returncode}",
+                    exit_code=res.returncode
+                )
+                raise AirflowFailException(
+                    f"Great Expectations validation returned unexpected exit code {res.returncode}. "
+                    f"Check logs for details."
+                )
+        except subprocess.CalledProcessError as e:
+            # Subprocess failed (e.g., baseline creation failed)
+            _create_fallback_anomalies(
+                "SubprocessError",
+                f"Great Expectations subprocess failed: {str(e)}",
+                exit_code=e.returncode if hasattr(e, 'returncode') else None
+            )
+            raise AirflowFailException(
+                f"Great Expectations validation subprocess failed: {e}. "
+                f"Ensure great_expectations==0.18.21 is installed."
+            ) from e
+        except FileNotFoundError as e:
+            # Script or input file not found
+            _create_fallback_anomalies(
+                "FileNotFoundError",
+                f"Required file or script not found: {str(e)}",
+                exit_code=None
+            )
+            raise AirflowFailException(
+                f"Great Expectations validation failed: required file or script not found: {e}"
+            ) from e
         except Exception as e:
-            logger.warning("GE validation invocation failed (non-blocking): %s", e)
+            # Any other exception
+            _create_fallback_anomalies(
+                "ValidationInvocationError",
+                f"Validation invocation failed: {str(e)}",
+                exit_code=None
+            )
+            raise AirflowFailException(
+                f"Great Expectations validation invocation failed: {e}"
+            ) from e
 
         # 2) Read GE-produced artifacts as the single source of metrics
-        anomalies_path = METRICS_DIR / "validation" / ds_nodash / "anomalies.json"
-        stats_path = METRICS_DIR / "stats" / ds_nodash / "stats.json"
+        # GE validation must produce these artifacts - fail if they don't exist
+        if not stats_path.exists():
+            # Create fallback anomalies if stats.json is missing
+            if not anomalies_path.exists():
+                _create_fallback_anomalies(
+                    "MissingArtifacts",
+                    f"Great Expectations validation artifacts missing: {stats_path} not found. GE validation must produce stats.json.",
+                    exit_code=None
+                )
+            raise AirflowFailException(
+                f"Great Expectations validation artifacts missing: {stats_path} not found. "
+                f"GE validation must produce stats.json."
+            )
+        if not anomalies_path.exists():
+            # This should not happen if we've handled all failure cases above, but just in case
+            _create_fallback_anomalies(
+                "MissingAnomalies",
+                f"Great Expectations validation artifacts missing: {anomalies_path} not found. GE validation must produce anomalies.json.",
+                exit_code=None
+            )
+            raise AirflowFailException(
+                f"Great Expectations validation artifacts missing: {anomalies_path} not found. "
+                f"GE validation must produce anomalies.json."
+            )
+        
+        # Read artifacts - fail if reading fails
+        try:
+            with open(stats_path) as f:
+                s = json.load(f)
+            with open(anomalies_path) as f:
+                a = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            # If reading fails, create fallback with error info
+            if not anomalies_path.exists():
+                _create_fallback_anomalies(
+                    "ArtifactReadError",
+                    f"Failed to read validation artifacts: {str(e)}",
+                    exit_code=None
+                )
+            raise AirflowFailException(
+                f"Failed to read validation artifacts: {e}"
+            ) from e
+        
         metrics = {
-            "row_count": 0,
-            "null_prompt_count": None,
-            "dup_prompt_count": None,
-            "unknown_category_rate": None,
-            "text_len_min": None,
-            "text_len_max": None,
-            "size_label_mismatch_count": None,
-            "hard_fail": [],
-            "soft_warn": [],
+            "row_count": s.get("row_count", 0),
+            "null_prompt_count": s.get("null_prompt_count"),
+            "dup_prompt_count": s.get("dup_prompt_count"),
+            "unknown_category_rate": s.get("unknown_category_rate"),
+            "text_len_min": s.get("text_len_min"),
+            "text_len_max": s.get("text_len_max"),
+            "size_label_mismatch_count": s.get("size_label_mismatch_count"),
+            "hard_fail": a.get("hard_fail", []),
+            "soft_warn": a.get("soft_warn", []),
             "report_paths": [str(anomalies_path), str(stats_path)],
         }
-        try:
-            if stats_path.exists():
-                with open(stats_path) as f:
-                    s = json.load(f)
-                metrics.update(
-                    {
-                        "row_count": s.get("row_count", 0),
-                        "null_prompt_count": s.get("null_prompt_count"),
-                        "dup_prompt_count": s.get("dup_prompt_count"),
-                        "unknown_category_rate": s.get("unknown_category_rate"),
-                        "text_len_min": s.get("text_len_min"),
-                        "text_len_max": s.get("text_len_max"),
-                        "size_label_mismatch_count": s.get("size_label_mismatch_count"),
-                    }
-                )
-            if anomalies_path.exists():
-                with open(anomalies_path) as f:
-                    a = json.load(f)
-                metrics.update(
-                    {
-                        "hard_fail": a.get("hard_fail", []),
-                        "soft_warn": a.get("soft_warn", []),
-                    }
-                )
-        except Exception as e:
-            logger.warning("Failed to read GE artifacts: %s", e)
-
-        # Always return metrics for downstream report/enforce/email
+        
         return metrics
 
-    @task(trigger_rule=TriggerRule.ALL_DONE)
+    @task(trigger_rule=TriggerRule.ALL_SUCCESS)
     def report_validation_status(metrics: dict | None) -> None:
         """Log validation outcome (pass, warnings, or hard fail)."""
         if not metrics:
@@ -289,28 +440,97 @@ def salad_preprocess_v1():
                 f"Validation hard-failed. See reports: {metrics.get('report_paths')}"
             )
 
-    email_validation_report = EmailOperator(
+    def send_validation_report_email(**context):
+        """Send validation report email with conditional file attachments."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            ds_nodash = context.get('ds_nodash')
+            run_id = context['run_id']
+            
+            # Handle missing ds_nodash gracefully
+            if not ds_nodash and ds:
+                ds_nodash = ds.replace('-', '')
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            metrics = ti.xcom_pull(task_ids='validate_output', default=None)
+            
+            # Determine file path - always check both XCom and fallback
+            file_paths = []
+            
+            # First, try to get path from XCom metrics
+            if metrics and metrics.get('report_paths'):
+                anomalies_path_from_xcom = metrics['report_paths'][0] if metrics['report_paths'] else None
+                if anomalies_path_from_xcom:
+                    path_obj = Path(anomalies_path_from_xcom)
+                    # Convert to absolute if relative
+                    if not path_obj.is_absolute():
+                        path_obj = REPO_ROOT / path_obj
+                    if path_obj.exists() and path_obj.is_file():
+                        file_paths.append(str(path_obj))
+                        logger.info(f"Using anomalies.json from XCom: {path_obj}")
+            
+            # Always check fallback path regardless of whether metrics exist
+            if ds_nodash:
+                fallback_path = REPO_ROOT / "data" / "metrics" / "validation" / ds_nodash / "anomalies.json"
+                if fallback_path.exists() and fallback_path.is_file():
+                    fallback_str = str(fallback_path)
+                    if fallback_str not in file_paths:  # Avoid duplicates
+                        file_paths.append(fallback_str)
+                        logger.info(f"Using anomalies.json from fallback path: {fallback_path}")
+                else:
+                    logger.warning(f"Fallback anomalies.json not found at: {fallback_path}")
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Validation Report for {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Selected CSV:</b> {csv_path if csv_path else 'N/A'}</p>
+            """
+            if metrics:
+                html_content += f"""
+                <p><b>Hard Fail:</b> {metrics.get('hard_fail', [])}</p>
+                <p><b>Soft Warn:</b> {metrics.get('soft_warn', [])}</p>
+                <p>Reports are attached (if available). Locations recorded in XCom:
+                <br><code>{metrics.get('report_paths', [])}</code></p>
+                """
+            else:
+                html_content += """
+                <p><b>Warning:</b> Validation metrics not available. Validation task may have failed before producing metrics.</p>
+                <p>Check the validation task logs for details.</p>
+                <p><b>Note:</b> If anomalies.json was created, it will be attached to this email.</p>
+                """
+            
+            # Log file attachment status
+            if file_paths:
+                logger.info(f"Attaching {len(file_paths)} file(s) to email: {file_paths}")
+            else:
+                logger.warning("No anomalies.json file found to attach to email")
+            
+            # Send email with conditional files
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] Validation Report",
+                html_content=html_content,
+                file_paths=file_paths,
+            )
+            logger.info("Validation report email sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send validation report email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_validation_report = PythonOperator(
         task_id="email_validation_report",
-        to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
-        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] Validation Report",
-        html_content="""
-            <h3>Validation Report for {{ dag.dag_id }}</h3>
-            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
-            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv') }}</p>
-            <p><b>Hard Fail:</b> {{ ti.xcom_pull(task_ids='validate_output')['hard_fail'] if ti.xcom_pull(task_ids='validate_output') else 'n/a' }}</p>
-            <p><b>Soft Warn:</b> {{ ti.xcom_pull(task_ids='validate_output')['soft_warn'] if ti.xcom_pull(task_ids='validate_output') else 'n/a' }}</p>
-            <p>Reports are attached (if available). Locations recorded in XCom:
-            <br><code>{{ ti.xcom_pull(task_ids='validate_output')['report_paths'] if ti.xcom_pull(task_ids='validate_output') else [] }}</code></p>
-        """,
-        files=[
-            "{{ (ti.xcom_pull(task_ids='validate_output')['report_paths'] or [])[0] if ti.xcom_pull(task_ids='validate_output') else '' }}"
-        ],
+        python_callable=send_validation_report_email,
         trigger_rule=TriggerRule.ALL_DONE,
+        retries=0,  # Disable retries for email tasks
     )
 
     email_success = EmailOperator(
         task_id="email_success",
-        to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
+        to=["athatalnikar@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ✅ DAG Succeeded",
         html_content="""
             <h3>DAG Succeeded: {{ dag.dag_id }}</h3>
@@ -329,32 +549,428 @@ def salad_preprocess_v1():
         trigger_rule=TriggerRule.ALL_SUCCESS,
     )
 
-    email_failure = EmailOperator(
-        task_id="email_failure",
-        to=["yashi.chawla1@gmail.com", "chawla.y@northeastern.edu"],
-        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ DAG Failed",
+    # ── Context-Specific Failure Email Operators ────────────────────────────────
+    
+    # Email 1: DVC Pull Failure (Infrastructure/Data Source Issue)
+    email_failure_dvc_pull = EmailOperator(
+        task_id="email_failure_dvc_pull",
+        to=["athatalnikar@gmail.com"],
+        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ DVC Pull Failed",
         html_content="""
-            <h3>DAG Failed: {{ dag.dag_id }}</h3>
-            <p><b>Run:</b> {{ run_id }}</p>
-            <p>One or more tasks failed. Check Airflow logs/UI.</p>
-            {% set m = ti.xcom_pull(task_ids='validate_output') %}
-            {% if m %}
-            <p><b>Validation summary:</b>
-                rows={{ m['row_count'] }},
-                nulls={{ m['null_prompt_count'] }},
-                dups={{ m['dup_prompt_count'] }},
-                unknown_rate={{ '%.3f'|format(m['unknown_category_rate']) }},
-                text_len=[{{ m['text_len_min'] }},{{ m['text_len_max'] }}],
-                mismatches={{ m['size_label_mismatch_count'] }},
-                hard_fail={{ m['hard_fail'] }},
-                soft_warn={{ m['soft_warn'] }}</p>
-            <p><b>Report:</b> {{ m['report_paths'] }}</p>
+            <h3>DVC Pull Failed: {{ dag.dag_id }}</h3>
+            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
+            <p><b>Failed Task:</b> dvc_pull</p>
+            <p><b>Issue:</b> Failed to pull data from DVC remote storage.</p>
+            <p><b>Possible Causes:</b></p>
+            <ul>
+                <li>GCP credentials issue (check GOOGLE_APPLICATION_CREDENTIALS)</li>
+                <li>DVC remote configuration problem</li>
+                <li>Network connectivity issue</li>
+                <li>Remote storage bucket access denied</li>
+            </ul>
+            <p><b>Action Required:</b> Check DVC remote configuration and GCP credentials.</p>
+            <p><b>Tip:</b> In the Airflow UI, open the "dvc_pull" task's "Log" for details.
+            {% if ti.log_url %}
+            <br><code>{{ ti.log_url }}</code>
             {% else %}
-            <p>No metrics available (validation may have crashed before reporting).</p>
+            <br>Navigate to the failed task in Airflow UI to view logs.
             {% endif %}
-            <p><b>Tip:</b> In the Airflow UI, open the failed task's “Log” for details.</p>
+            </p>
         """,
         trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    # Email 2: Setup/Config Failure (Configuration Issue)
+    email_failure_setup = EmailOperator(
+        task_id="email_failure_setup",
+        to=["athatalnikar@gmail.com"],
+        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Setup/Config Failed",
+        html_content="""
+            <h3>Setup/Config Failed: {{ dag.dag_id }}</h3>
+            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
+            <p><b>Failed Task:</b> ensure_dirs or ensure_config</p>
+            <p><b>Issue:</b> Failed during setup or configuration validation.</p>
+            {% set cfg_path = ti.xcom_pull(task_ids='ensure_config', default_var=None) %}
+            {% if cfg_path %}
+            <p><b>Config Path:</b> {{ cfg_path }}</p>
+            {% else %}
+            <p><b>Config Path:</b> N/A (config task may have failed before producing path)</p>
+            {% endif %}
+            <p><b>Possible Causes:</b></p>
+            <ul>
+                <li>Invalid or missing data_sources.json configuration</li>
+                <li>Directory creation permission issues</li>
+                <li>Config file format errors (invalid JSON)</li>
+            </ul>
+            <p><b>Action Required:</b> Verify config file and check directory permissions.</p>
+            <p><b>Tip:</b> In the Airflow UI, check the failed task's "Log" for details.
+            {% if ti.log_url %}
+            <br><code>{{ ti.log_url }}</code>
+            {% else %}
+            <br>Navigate to the failed task in Airflow UI to view logs.
+            {% endif %}
+            </p>
+        """,
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    # Email 3: Preprocessing Failure (Data Processing Issue)
+    email_failure_preprocessing = EmailOperator(
+        task_id="email_failure_preprocessing",
+        to=["athatalnikar@gmail.com"],
+        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Preprocessing Failed",
+        html_content="""
+            <h3>Preprocessing Failed: {{ dag.dag_id }}</h3>
+            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
+            <p><b>Failed Task:</b> preprocess_input_csv</p>
+            <p><b>Issue:</b> Failed to preprocess input data.</p>
+            {% set cfg_path = ti.xcom_pull(task_ids='ensure_config', default_var=None) %}
+            {% if cfg_path %}
+            <p><b>Config Used:</b> {{ cfg_path }}</p>
+            {% else %}
+            <p><b>Config Used:</b> N/A (config may not be available)</p>
+            {% endif %}
+            <p><b>Possible Causes:</b></p>
+            <ul>
+                <li>Data source unavailable (HuggingFace dataset download failed)</li>
+                <li>Preprocessing script error</li>
+                <li>Output file write permission issue</li>
+                <li>Empty or invalid output generated</li>
+            </ul>
+            <p><b>Action Required:</b> Check data source availability and preprocessing script logs.</p>
+            <p><b>Tip:</b> In the Airflow UI, open the "preprocess_input_csv" task's "Log" for details.
+            {% if ti.log_url %}
+            <br><code>{{ ti.log_url }}</code>
+            {% else %}
+            <br>Navigate to the failed task in Airflow UI to view logs.
+            {% endif %}
+            </p>
+        """,
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    # Email 4: Validation Failure (Data Quality Issue)
+    def send_validation_failure_email(**context):
+        """Send validation failure email with conditional file attachments."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            ds_nodash = context.get('ds_nodash')
+            run_id = context['run_id']
+            
+            # Handle missing ds_nodash gracefully
+            if not ds_nodash and ds:
+                ds_nodash = ds.replace('-', '')
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            validate_metrics = ti.xcom_pull(task_ids='validate_output', default=None)
+            enforce_metrics = ti.xcom_pull(task_ids='enforce_validation_policy', default=None)
+            
+            # Determine failed task
+            if validate_metrics is None:
+                failed_task = "validate_output (task failed before producing metrics)"
+            elif enforce_metrics is None:
+                failed_task = "enforce_validation_policy (validation policy enforcement failed)"
+            else:
+                failed_task = "validate_output or enforce_validation_policy"
+            
+            # Determine file path - always check both XCom and fallback
+            file_paths = []
+            
+            # First, try to get path from XCom metrics
+            if validate_metrics and validate_metrics.get('report_paths'):
+                anomalies_path_from_xcom = validate_metrics['report_paths'][0] if validate_metrics['report_paths'] else None
+                if anomalies_path_from_xcom:
+                    path_obj = Path(anomalies_path_from_xcom)
+                    # Convert to absolute if relative
+                    if not path_obj.is_absolute():
+                        path_obj = REPO_ROOT / path_obj
+                    if path_obj.exists() and path_obj.is_file():
+                        file_paths.append(str(path_obj))
+                        logger.info(f"Using anomalies.json from XCom: {path_obj}")
+            
+            # Always check fallback path regardless of whether metrics exist
+            if ds_nodash:
+                fallback_path = REPO_ROOT / "data" / "metrics" / "validation" / ds_nodash / "anomalies.json"
+                if fallback_path.exists() and fallback_path.is_file():
+                    fallback_str = str(fallback_path)
+                    if fallback_str not in file_paths:  # Avoid duplicates
+                        file_paths.append(fallback_str)
+                        logger.info(f"Using anomalies.json from fallback path: {fallback_path}")
+                else:
+                    logger.warning(f"Fallback anomalies.json not found at: {fallback_path}")
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Validation Failed: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> {failed_task}</p>
+                <p><b>Issue:</b> Data validation failed or validation policy enforcement blocked the pipeline.</p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Validated CSV:</b> {csv_path}</p>"
+            
+            if validate_metrics:
+                html_content += f"""
+                <p><b>Validation Metrics (before failure):</b></p>
+                <ul>
+                    <li><b>Rows:</b> {validate_metrics.get('row_count', 'N/A')}</li>
+                    <li><b>Null Prompts:</b> {validate_metrics.get('null_prompt_count', 'N/A')}</li>
+                    <li><b>Duplicate Prompts:</b> {validate_metrics.get('dup_prompt_count', 'N/A')}</li>
+                    <li><b>Unknown Category Rate:</b> {validate_metrics.get('unknown_category_rate', 0):.3f}</li>
+                    <li><b>Text Length Range:</b> [{validate_metrics.get('text_len_min', 'N/A')}, {validate_metrics.get('text_len_max', 'N/A')}]</li>
+                    <li><b>Size Label Mismatches:</b> {validate_metrics.get('size_label_mismatch_count', 'N/A')}</li>
+                </ul>
+                <p><b>Hard Failures:</b> {validate_metrics.get('hard_fail', [])}</p>
+                <p><b>Soft Warnings:</b> {validate_metrics.get('soft_warn', [])}</p>
+                <p><b>Report Paths:</b> {validate_metrics.get('report_paths', [])}</p>
+                """
+            else:
+                html_content += """
+                <p><b>Warning:</b> Validation metrics not available. Validation may have crashed before completion.</p>
+                <p><b>Action:</b> Check the validate_output task logs in Airflow UI for detailed error information.</p>
+                """
+            
+            html_content += """
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>Data quality issues (hard_fail conditions met)</li>
+                    <li>Great Expectations validation script error</li>
+                    <li>Baseline schema missing or corrupted</li>
+                    <li>Validation artifacts not generated</li>
+                    <li>Subprocess execution failure</li>
+                </ul>
+                <p><b>Action Required:</b> Review validation reports and fix data quality issues.</p>
+                <p><b>Tip:</b> Check validation reports at the paths above, or view the failed task's "Log" in Airflow UI.</p>
+            """
+            
+            # Log file attachment status
+            if file_paths:
+                logger.info(f"Attaching {len(file_paths)} file(s) to email: {file_paths}")
+            else:
+                logger.warning("No anomalies.json file found to attach to email")
+            
+            # Send email with conditional files
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Validation Failed",
+                html_content=html_content,
+                file_paths=file_paths,
+            )
+            logger.info("Validation failure email sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send validation failure email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_failure_validation = PythonOperator(
+        task_id="email_failure_validation",
+        python_callable=send_validation_failure_email,
+        trigger_rule=TriggerRule.ONE_FAILED,
+        retries=0,  # Disable retries for email tasks
+    )
+
+    # Email 5: Enforce Validation Policy Failure (Policy Enforcement Issue)
+    def send_enforce_policy_failure_email(**context):
+        """Send enforce policy failure email only if enforce_task actually failed (not skipped)."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            ds_nodash = context.get('ds_nodash')
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Handle missing ds_nodash gracefully
+            if not ds_nodash and ds:
+                ds_nodash = ds.replace('-', '')
+            
+            # Check if enforce_validation_policy actually failed (not skipped)
+            enforce_task_instance = dag_run.get_task_instance('enforce_validation_policy')
+            
+            # Only send email if task actually failed (not skipped or upstream_failed)
+            if not enforce_task_instance or enforce_task_instance.state not in ['failed']:
+                state = enforce_task_instance.state if enforce_task_instance else 'not found'
+                logger.info(
+                    f"enforce_validation_policy is in state '{state}', not 'failed'. "
+                    f"Skipping task. This is expected when validate_output fails."
+                )
+                raise AirflowSkipException(f"Upstream task enforce_validation_policy is in state '{state}', not 'failed'. Skipping email.")
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            metrics = ti.xcom_pull(task_ids='validate_output', default=None)
+            
+            # Determine file path - always check both XCom and fallback
+            file_paths = []
+            
+            # First, try to get path from XCom metrics
+            if metrics and metrics.get('report_paths'):
+                anomalies_path_from_xcom = metrics['report_paths'][0] if metrics['report_paths'] else None
+                if anomalies_path_from_xcom:
+                    path_obj = Path(anomalies_path_from_xcom)
+                    # Convert to absolute if relative
+                    if not path_obj.is_absolute():
+                        path_obj = REPO_ROOT / path_obj
+                    if path_obj.exists() and path_obj.is_file():
+                        file_paths.append(str(path_obj))
+                        logger.info(f"Using anomalies.json from XCom: {path_obj}")
+            
+            # Always check fallback path regardless of whether metrics exist
+            if ds_nodash:
+                fallback_path = REPO_ROOT / "data" / "metrics" / "validation" / ds_nodash / "anomalies.json"
+                if fallback_path.exists() and fallback_path.is_file():
+                    fallback_str = str(fallback_path)
+                    if fallback_str not in file_paths:  # Avoid duplicates
+                        file_paths.append(fallback_str)
+                        logger.info(f"Using anomalies.json from fallback path: {fallback_path}")
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Validation Policy Enforcement Failed: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> enforce_validation_policy</p>
+                <p><b>Issue:</b> Validation completed but policy enforcement blocked the pipeline due to hard validation failures.</p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Validated CSV:</b> {csv_path}</p>"
+            
+            if metrics:
+                html_content += f"""
+                <p><b>Validation Metrics:</b></p>
+                <ul>
+                    <li><b>Rows:</b> {metrics.get('row_count', 'N/A')}</li>
+                    <li><b>Null Prompts:</b> {metrics.get('null_prompt_count', 'N/A')}</li>
+                    <li><b>Duplicate Prompts:</b> {metrics.get('dup_prompt_count', 'N/A')}</li>
+                    <li><b>Unknown Category Rate:</b> {metrics.get('unknown_category_rate', 0):.3f}</li>
+                    <li><b>Text Length Range:</b> [{metrics.get('text_len_min', 'N/A')}, {metrics.get('text_len_max', 'N/A')}]</li>
+                    <li><b>Size Label Mismatches:</b> {metrics.get('size_label_mismatch_count', 'N/A')}</li>
+                </ul>
+                <p><b>Hard Failures (blocking pipeline):</b> {metrics.get('hard_fail', [])}</p>
+                <p><b>Soft Warnings:</b> {metrics.get('soft_warn', [])}</p>
+                <p><b>Report Paths:</b> {metrics.get('report_paths', [])}</p>
+                """
+            else:
+                html_content += "<p><b>Warning:</b> Validation metrics not available.</p>"
+            
+            html_content += """
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>Hard validation failures detected (data quality issues that block pipeline)</li>
+                    <li>Validation metrics missing or corrupted</li>
+                    <li>Policy enforcement logic error</li>
+                </ul>
+                <p><b>Action Required:</b> Review validation reports and fix data quality issues. The pipeline was blocked to prevent processing invalid data.</p>
+                <p><b>Tip:</b> Check validation reports at the paths above, or view the failed task's "Log" in Airflow UI.</p>
+            """
+            
+            # Log file attachment status
+            if file_paths:
+                logger.info(f"Attaching {len(file_paths)} file(s) to email: {file_paths}")
+            
+            # Send email with conditional files
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Validation Policy Enforcement Failed",
+                html_content=html_content,
+                file_paths=file_paths,
+            )
+            logger.info("Enforce policy failure email sent successfully")
+        except AirflowSkipException:
+            # Re-raise skip exceptions so task is properly skipped
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send enforce policy failure email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_failure_enforce_policy = PythonOperator(
+        task_id="email_failure_enforce_policy",
+        python_callable=send_enforce_policy_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless, but function will skip if upstream wasn't actually failed
+        retries=0,  # Disable retries for email tasks
+    )
+
+    # Email 6: DVC Push Failure (Artifact Storage Issue)
+    def send_dvc_push_failure_email(**context):
+        """Send DVC push failure email only if dvc_push actually failed (not skipped)."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Check if dvc_push actually failed (not skipped)
+            dvc_push_task_instance = dag_run.get_task_instance('dvc_push')
+            
+            # Only send email if task actually failed (not skipped or upstream_failed)
+            if not dvc_push_task_instance or dvc_push_task_instance.state not in ['failed']:
+                state = dvc_push_task_instance.state if dvc_push_task_instance else 'not found'
+                logger.info(
+                    f"dvc_push is in state '{state}', not 'failed'. "
+                    f"Skipping task. This is expected when validation fails."
+                )
+                raise AirflowSkipException(f"Upstream task dvc_push is in state '{state}', not 'failed'. Skipping email.")
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            metrics = ti.xcom_pull(task_ids='validate_output', default=None)
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>DVC Push Failed (But Pipeline Succeeded): {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> dvc_push</p>
+                <p><b>Status:</b> ⚠️ <b>Pipeline completed successfully, but artifact push to remote failed.</b></p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Processed CSV:</b> {csv_path}</p>"
+            
+            if metrics:
+                html_content += f"""
+                <p><b>Validation Summary:</b></p>
+                <ul>
+                    <li><b>Rows:</b> {metrics.get('row_count', 'N/A')}</li>
+                    <li><b>Validation Status:</b> Passed</li>
+                    <li><b>Warnings:</b> {metrics.get('soft_warn', [])}</li>
+                </ul>
+                """
+            
+            html_content += """
+                <p><b>Issue:</b> Failed to push processed artifacts to DVC remote storage.</p>
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>GCP credentials issue</li>
+                    <li>DVC remote storage quota exceeded</li>
+                    <li>Network connectivity issue during push</li>
+                    <li>Permission denied on remote bucket</li>
+                </ul>
+                <p><b>Action Required:</b> Data is processed and validated locally, but not versioned remotely. 
+                Check DVC remote configuration and retry push manually if needed.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "dvc_push" task's "Log" for details.</p>
+            """
+            
+            # Send email (no file attachments for this email)
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ⚠️ DVC Push Failed (Pipeline Succeeded)",
+                html_content=html_content,
+                file_paths=None,
+            )
+            logger.info("DVC push failure email sent successfully")
+        except AirflowSkipException:
+            # Re-raise skip exceptions so task is properly skipped
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send DVC push failure email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_failure_dvc_push = PythonOperator(
+        task_id="email_failure_dvc_push",
+        python_callable=send_dvc_push_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless, but function will skip if upstream wasn't actually failed
+        retries=0,  # Disable retries for email tasks
     )
 
     paths = ensure_dirs()
@@ -363,10 +979,6 @@ def salad_preprocess_v1():
     validate_task = validate_output(preprocessed_csv)
     report_task = report_validation_status(validate_task)
     enforce_task = enforce_validation_policy(validate_task)
-
-    SCRIPT_GE = REPO_ROOT / "scripts" / "ge_runner.py"
-    METRICS_DIR = DATA_DIR / "metrics"
-    BASELINE_SCHEMA = METRICS_DIR / "schema" / "baseline" / "schema.json"
 
     # assumes DVC_TRACK_PATHS is defined (list of strings) and REPO_ROOT points to repo root
     dvc_push = BashOperator(
@@ -400,16 +1012,46 @@ def salad_preprocess_v1():
     )
 
     # ── Orchestration ───────────────────────────────────────────────────────────
+    # If validate_task fails, both report_task and enforce_task are skipped
+    # (report_task uses ALL_SUCCESS, enforce_task uses default ALL_SUCCESS)
     dvc_pull >> paths >> cfg >> preprocessed_csv >> validate_task >> [report_task, enforce_task]
  
-    # Email report always
+    # Email validation report - runs regardless of validation outcome
+    # Only depend on validate_task - report_task is optional and may be skipped when validate_task fails
+    # This prevents email_validation_report from waiting indefinitely for report_task
     validate_task >> email_validation_report
 
     # On success: push artifacts then success email
+    # If enforce_task fails, dvc_push is skipped (default ALL_SUCCESS trigger rule)
     enforce_task >> dvc_push >> email_success
 
-    # On any failure in the core path: failure email
-    [preprocessed_csv, validate_task, enforce_task] >> email_failure
+    # Context-specific failure emails based on where failure occurs
+    # Stage 1: DVC Pull failures
+    dvc_pull >> email_failure_dvc_pull
+    
+    # Stage 2: Setup/Config failures (only if dvc_pull succeeded)
+    # Note: Only connect cfg, not paths (setup task), to avoid violating setup task trigger rule requirement
+    # If paths (setup task) fails, DAG will fail and cfg won't run, so we only need to catch cfg failures
+    cfg >> email_failure_setup
+    
+    # Stage 3: Preprocessing failures (only if setup succeeded)
+    preprocessed_csv >> email_failure_preprocessing
+    
+    # Stage 4: Validation failures (only if preprocessing succeeded)
+    # Only connect validate_task - if it fails, enforce_task is skipped so we don't need to wait for it
+    validate_task >> email_failure_validation
+    
+    # Stage 4b: Enforce validation policy failures (only if validate_task succeeded)
+    # This handles the case where validate_task succeeded but enforce_task failed
+    enforce_task >> email_failure_enforce_policy
+    
+    # Stage 5: DVC Push failures (only if validation succeeded)
+    # Only trigger if dvc_push actually ran and failed (not skipped)
+    # Only connect dvc_push - if it's skipped (enforce_task failed), dvc_push is in "upstream_failed" state
+    # ONE_FAILED only triggers on "failed" state, not "upstream_failed" or "skipped" state
+    # So email will only trigger if dvc_push actually executed and failed
+    # Note: If this still triggers incorrectly, we may need to use ALL_DONE and check task state in template
+    dvc_push >> email_failure_dvc_push
 
 
 dag = salad_preprocess_v1()
