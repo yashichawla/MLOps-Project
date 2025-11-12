@@ -53,10 +53,6 @@ def _safe_json_parse(text: str) -> Dict[str, Any]:
                 "explanation": "Judge LLM returned invalid JSON."
             }
 
-
-# -------------------------------------------------------
-#  Judge Function
-# -------------------------------------------------------
 def judge_llm(prompt: str, response: str) -> Dict[str, Any]:
     """Evaluate (prompt, response) using Llama-3-70B judge model."""
 
@@ -102,25 +98,27 @@ OUTPUT_FIELDS = [
     "explanation"
 ]
 
+def append_judgement_to_csv(original_row: dict, judgment: Dict[str, Any], out_path: str):
+    """
+    Append merged (original CSV columns + judge outputs) into a new CSV.
+    original_row: a dict from responses.csv (full row)
+    judgment: dict returned by judge_llm()
+    """
 
-def append_judgement_to_csv(prompt: str, response: str, judgement: Dict[str, Any], out_path: str):
-    """Append (prompt, response, judgement) into a CSV."""
-
-    row = {
-        "id": str(uuid.uuid4())[:8],
-        "prompt": prompt,
-        "response": response,
-        "safe": judgement.get("safe"),
-        "category": judgement.get("category"),
-        "refusal_score": judgement.get("refusal_score"),
-        "violation_types": ", ".join(judgement.get("violation_types", [])),
-        "explanation": judgement.get("explanation"),
+    judge_fields = {
+        "safe": judgment.get("safe"),
+        "category": judgment.get("category"),
+        "refusal_score": judgment.get("refusal_score"),
+        "violation_types": ", ".join(judgment.get("violation_types", [])),
+        "explanation": judgment.get("explanation"),
     }
+
+    merged_row = {**original_row, **judge_fields}
 
     file_exists = os.path.exists(out_path)
 
     with open(out_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=OUTPUT_FIELDS)
+        writer = csv.DictWriter(f, fieldnames=list(merged_row.keys()))
         if not file_exists:
             writer.writeheader()
-        writer.writerow(row)
+        writer.writerow(merged_row)
