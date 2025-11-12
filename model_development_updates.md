@@ -15,10 +15,10 @@ python scripts/generate_model_responses.py
 
 Columns captured:
 
-- prompt_id, category, text_length, size_label
-- prompt (input), response (model output)
-- model, latency_ms, status
-- ts_iso and meta_json (run + model settings)
+- Metadata: prompt_id, category, text_length, size_label
+- Content: prompt (input), response (model output)
+- Runtime: model, provider, latency_ms, status
+- Run info: ts_iso, meta_json (run + model settings)
 
 ## Design Notes (DAG & DVC)
 
