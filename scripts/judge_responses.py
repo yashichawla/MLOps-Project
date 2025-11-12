@@ -30,17 +30,13 @@ def judge_responses(
         print(f"PROMPT: {prompt[:120]}...")
         print(f"RESPONSE: {response[:120]}...")
 
-        # 1. Judge using Llama-3-70B
         result = judge_llm(prompt, response)
 
-        # 2. Save results
         append_judgement_to_csv(
-    out_path=output_csv,
-    prompt=prompt,
-    response=response,
-    judgement=result
-)
-
+            original_row=row.to_dict(),
+            judgment=result,
+            out_path=output_csv
+        )
 
     print("\n✓ All judgements complete.")
     print(f"Results saved to {output_csv}")
