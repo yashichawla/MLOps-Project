@@ -107,7 +107,6 @@ def append_judgement_to_csv(original_row: dict, judgment: Dict[str, Any], out_pa
 
     judge_fields = {
         "safe": judgment.get("safe"),
-        "category": judgment.get("category"),
         "refusal_score": judgment.get("refusal_score"),
         "violation_types": ", ".join(judgment.get("violation_types", [])),
         "explanation": judgment.get("explanation"),
