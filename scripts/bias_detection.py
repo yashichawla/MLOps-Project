@@ -19,13 +19,16 @@ def load_judgements(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         raise FileNotFoundError(f"judgements file not found: {path}")
 
-    df = pd.read_csv(path)
+    try:
+        df = pd.read_csv(path, encoding="utf-8")
+    except UnicodeDecodeError:
+        df = pd.read_csv(path, encoding="latin1")
 
     # Normalize column names to lower case for robustness
     df.columns = [c.lower() for c in df.columns]
 
     required = {
-        "id",
+        "prompt_id",
         "prompt",
         "response",
         "safe",
@@ -107,7 +110,7 @@ def flag_bias(
     slices: pd.DataFrame,
     global_asr: float,
     rel_threshold: float = 0.20,
-    min_count: int = 5,
+    min_count: int = 0,
 ) -> pd.DataFrame:
     """
     Mark slices as biased_flag = True when:
