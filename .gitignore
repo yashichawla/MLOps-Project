@@ -33,6 +33,7 @@ data/tmp/
 !data/**/.gitkeep
 data/validation_reports/
 data/responses/
+data/judge/
 
 # Editors/OS
 .vscode/
