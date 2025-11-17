@@ -5,6 +5,36 @@ from typing import Dict, Any
 
 import pandas as pd
 
+# --------------------- PATH HELPERS ---------------------
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "attack_llm_config.json")
+JUDGE_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "judge")
+BIAS_OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "data", "bias")
+
+
+# --------------------- CONFIG LOADER ---------------------
+
+def load_config_models():
+    """
+    Load models list from config/attack_llm_config.json.
+    Expects a top-level key "models": [...]
+    """
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"Config not found: {CONFIG_PATH}")
+
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    models = cfg.get("models", [])
+    if not models:
+        raise ValueError(f"No 'models' found in config: {CONFIG_PATH}")
+
+    print(f"[INFO] Loaded {len(models)} models from config.")
+    return models
+
 
 # ---------- 1. LOAD & NORMALIZE DATA ----------
 
@@ -182,11 +212,79 @@ def save_csv(df: pd.DataFrame, path: str) -> None:
     df.to_csv(path, index=False)
 
 
-# ---------- 6. CLI ENTRYPOINT ----------
+# --------------------- 6. RUN FOR ONE MODEL ---------------------
+
+def run_per_model_bias(
+    judgements_path: str,
+    model_name: str,
+    rel_threshold: float,
+    min_count: int,
+) -> None:
+    print(f"\n===== Bias Detection for model: {model_name} =====")
+    print(f"[INFO] Reading judgements from: {judgements_path}")
+
+    df = load_judgements(judgements_path)
+    if df.empty:
+        print("[WARN] No rows in judgements file, skipping.")
+        return
+
+    global_metrics = compute_global_metrics(df)
+
+    out_dir = os.path.join(BIAS_OUTPUT_ROOT, model_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # category slice
+    category_slices = compute_slice_metrics(df, "category")
+    category_slices = flag_bias(
+        category_slices,
+        global_asr=global_metrics["asr"],
+        rel_threshold=rel_threshold,
+        min_count=min_count,
+    )
+    save_csv(category_slices, os.path.join(out_dir, "category_slice_metrics.csv"))
+
+    # size slice
+    size_slices = compute_slice_metrics(df, "size_label")
+    size_slices = flag_bias(
+        size_slices,
+        global_asr=global_metrics["asr"],
+        rel_threshold=rel_threshold,
+        min_count=min_count,
+    )
+    save_csv(size_slices, os.path.join(out_dir, "size_slice_metrics.csv"))
+
+    # report
+    report = build_report(
+        global_metrics=global_metrics,
+        category_slices=category_slices,
+        size_slices=size_slices,
+        rel_threshold=rel_threshold,
+        min_count=min_count,
+    )
+    save_json(report, os.path.join(out_dir, "bias_report.json"))
+
+    print(f"[INFO] Global ASR: {global_metrics['asr']:.3f} over {global_metrics['count']} samples")
+    print(f"[INFO] Wrote bias artifacts to: {out_dir}")
+
+    flagged_cat = category_slices[category_slices["biased_flag"]]
+    flagged_size = size_slices[size_slices["biased_flag"]]
+
+    if not flagged_cat.empty:
+        print("\n[WARN] Category bias detected:")
+        print(flagged_cat[["category", "asr", "asr_deviation", "count"]])
+
+    if not flagged_size.empty:
+        print("\n[WARN] Size-based bias detected (by size_label):")
+        print(flagged_size[["size_label", "asr", "asr_deviation", "count"]])
+
+    if flagged_cat.empty and flagged_size.empty:
+        print("\n[INFO] No biased slices detected under current thresholds.")
+
+
+# --------------------- 7. MAIN (CONFIG-DRIVEN PER MODEL) ---------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="bias_detection.csv")
-    parser.add_argument("--judgements", type=str, default="judgements.csv")
+    parser = argparse.ArgumentParser(description="Per-model bias detection")
     parser.add_argument(
         "--rel-threshold",
         type=float,
@@ -196,77 +294,42 @@ def main() -> None:
     parser.add_argument(
         "--min-count",
         type=int,
-        default=5,
+        default=0,
         help="Minimum samples per slice to consider bias",
-    )
-    parser.add_argument(
-        "--out-json",
-        type=str,
-        default="data/bias/bias_report.json",
-    )
-    parser.add_argument(
-        "--out-category-csv",
-        type=str,
-        default="data/bias/category_slice_metrics.csv",
-    )
-    parser.add_argument(
-        "--out-size-csv",
-        type=str,
-        default="data/bias/size_slice_metrics.csv",
     )
     args = parser.parse_args()
 
-    df = load_judgements(args.judgements)
-    global_metrics = compute_global_metrics(df)
+    models = load_config_models()
 
-    # --- bias by category ---
-    category_slices = compute_slice_metrics(df, "category")
-    category_slices = flag_bias(
-        category_slices,
-        global_asr=global_metrics["asr"],
-        rel_threshold=args.rel_threshold,
-        min_count=args.min_count,
-    )
-    save_csv(category_slices, args.out_category_csv)
+    if not os.path.isdir(JUDGE_OUTPUT_DIR):
+        print(f"[WARN] Judge output dir does not exist yet: {JUDGE_OUTPUT_DIR}")
+        return
 
-    # --- bias by size_label (S/M/L) ---
-    size_slices = compute_slice_metrics(df, "size_label")
-    size_slices = flag_bias(
-        size_slices,
-        global_asr=global_metrics["asr"],
-        rel_threshold=args.rel_threshold,
-        min_count=args.min_count,
-    )
-    save_csv(size_slices, args.out_size_csv)
+    processed = 0
+    skipped = 0
 
-    # --- combined report ---
-    report = build_report(
-        global_metrics=global_metrics,
-        category_slices=category_slices,
-        size_slices=size_slices,
-        rel_threshold=args.rel_threshold,
-        min_count=args.min_count,
-    )
-    save_json(report, args.out_json)
+    for model in models:
+        model_name = model.get("name")
+        if not model_name:
+            print("[WARN] Model entry without 'name' in config, skipping.")
+            continue
 
-    print(f"[INFO] Global ASR: {global_metrics['asr']:.3f} over {global_metrics['count']} samples")
-    print(f"[INFO] Wrote category slice metrics to {args.out_category_csv}")
-    print(f"[INFO] Wrote size_label slice metrics to {args.out_size_csv}")
-    print(f"[INFO] Wrote bias report to {args.out_json}")
+        judgements_path = os.path.join(JUDGE_OUTPUT_DIR, f"judgements_{model_name}.csv")
 
-    # simple console summary of flagged slices
-    flagged_cat = category_slices[category_slices["biased_flag"]]
-    if not flagged_cat.empty:
-        print("\n[WARN] Category bias detected:")
-        print(flagged_cat[["category", "asr", "asr_deviation", "count"]])
+        if not os.path.exists(judgements_path):
+            print(f"[WARN] No judgements file for model '{model_name}' at {judgements_path}, skipping.")
+            skipped += 1
+            continue
 
-    flagged_size = size_slices[size_slices["biased_flag"]]
-    if not flagged_size.empty:
-        print("\n[WARN] Size-based bias detected (by size_label):")
-        print(flagged_size[["size_label", "asr", "asr_deviation", "count"]])
+        run_per_model_bias(
+            judgements_path=judgements_path,
+            model_name=model_name,
+            rel_threshold=args.rel_threshold,
+            min_count=args.min_count,
+        )
+        processed += 1
 
-    if flagged_cat.empty and flagged_size.empty:
-        print("\n[INFO] No biased slices detected under current thresholds.")
+    print(f"\n🎉 Bias detection complete. Processed {processed} models, skipped {skipped} (no judgements file).")
 
 
 if __name__ == "__main__":
