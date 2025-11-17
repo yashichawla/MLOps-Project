@@ -329,7 +329,7 @@ def main() -> None:
         )
         processed += 1
 
-    print(f"\n🎉 Bias detection complete. Processed {processed} models, skipped {skipped} (no judgements file).")
+    print(f"\nBias detection complete. Processed {processed} models, skipped {skipped} (no judgements file).")
 
 
 if __name__ == "__main__":
