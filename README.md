@@ -1,4 +1,4 @@
-# Break The Bot - test
+# Break The Bot
 
 Find project overview, see [project_overview.md](./project_overview.md)
 
@@ -388,7 +388,7 @@ More details information at : [judge_llm.pdf](documents/judge_llm.pdf)
 
 Runs bias-slicing analysis on the judged responses to detect disparities across categories and demographic slices.
 
-More detailed methodology reference at: [bias_stats.pdf](documents/bias_stats.md)
+More detailed methodology reference at: [bias_detection_metrics.pdf](documents/bias_detection_metrics.pdf)
 
 ---
 
