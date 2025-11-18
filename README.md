@@ -209,8 +209,10 @@ dvc_pull → ensure_dirs → ensure_config → preprocess_input_csv → validate
 After validation:
 enforce_validation_policy → [dvc_push_validation, model_gen]
 
-Model Pipeline (sequential):
-model_gen → model_judge → model_metrics → dvc_push_final → email_success
+Model Pipeline:
+model_gen → model_judge → [model_metrics, bias_detection] → dvc_push_final → email_success
+
+Note: model_metrics (additional_metrics.py) and bias_detection (bias_detection.py) run in parallel after model_judge completes.
 ```
 
 **Email Task Triggers:**
@@ -251,7 +253,7 @@ The DAG now uses the unified validator's XCom output for all emails:
 | Trigger    | Email                 | Contents                         | Trigger Rule        | Operator Type |
 | ---------- | --------------------- | -------------------------------- | ------------------- | ------------- |
 | Always     | **Validation Report** | JSON report + anomalies attached | ALL_DONE (runs regardless of task status) | EmailOperator |
-| On Success | **✅ DAG Succeeded**  | Summary of counts, ranges, and model pipeline status | ALL_SUCCESS (only if all upstream tasks succeed) | EmailOperator |
+| On Success | **✅ DAG Succeeded**  | Summary of counts, ranges, model pipeline status (including bias detection) | ALL_SUCCESS (only if all upstream tasks succeed) | EmailOperator |
 | On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.) | ALL_DONE or ONE_FAILED | EmailOperator / PythonOperator |
 
 **Trigger Rules Explained:**
@@ -369,7 +371,11 @@ Located in /documents/bias_detection_mitigation.md — explains bias definition,
 - Notification tasks: 
   - `email_validation_report` always runs after validation (ALL_DONE)
   - `email_success` runs only on full success when both data pipeline and model pipeline complete (ALL_SUCCESS)
-  - Context-specific failure emails (`email_failure_*`) run when specific tasks fail, with model pipeline failures using PythonOperator to check if tasks actually failed (not skipped)
+  - Context-specific failure emails (`email_failure_*`) run when specific tasks fail, with model pipeline failures (including bias_detection) using PythonOperator to check if tasks actually failed (not skipped)
+- Model pipeline metrics tasks:
+  - `compute_additional_metrics` and `compute_bias_detection` run in parallel after `judge_responses` completes
+  - Both require judgements CSV files from `judge_responses` task
+  - `compute_additional_metrics` also requires response CSVs from `generate_model_responses`
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
