@@ -106,34 +106,36 @@ Set TEST_MODE = true
 
 ```plaintext
 MLOps-Project/
-├── .dvc/
-│   ├── .gitignore                     # Ignore DVC cache or temp files from version control
-│   └── config                         # DVC configuration file defining remote storage (e.g., GCS bucket)
-├── dags/                              # Airflow DAGs
-│   └── salad_preprocess_dag.py        # Main DAG (preprocessing + single validation + email alerts)
-├── scripts/
-│   ├── preprocess_salad.py            # Data preprocessing pipeline
-│   ├── ge_runner.py                   # Great Expectations Validator
-│   └── utils/                         # Shared helper modules (if any)
-├── config/
-│   └── data_sources.json              # Config file for multi-source data ingestion
-├── data/
-│   ├── processed/                     # Output CSV (processed_data.csv)
-│   ├── metrics/                       # Stats + validation results (used by Airflow + GE)
-│   └── test_validation/               # Test CSVs for test-mode runs
-├── documents/                         # Documents related to assignment submissions
-├── tests/                             # Unit Test scripts for all components
-├── .airflow.env                       # Environment variables for local Airflow setup (e.g., connections, paths)
-├── .dockerignore                      # Files and folders excluded from the Docker build context
-├── .dvcignore                         # Files and folders excluded from DVC tracking
-├── .gitignore                         # Files and folders excluded from Git tracking
-├── pyproject.toml                     # Project metadata and dependency management configuration
-├── docker-compose.yml                 # Airflow + Postgres stack
-├── dvc.lock                           # Auto-generated file tracking exact data and pipeline versions
-├── dvc.yaml                           # Defines the DVC pipeline stages (data processing, training, etc.)
-├── requirements.txt                   # Dev dependencies (includes pandas, airflow, etc.)
-├── requirements-docker.txt            # Installed inside Docker containers
-└── README.md
+├── .dvc/                         # DVC metadata + remote storage config
+├── config/                       # Project-wide configuration files
+├── dags/                         # Airflow DAGs for data + model pipelines
+├── data/                         # Processed data, metrics, validation outputs (DVC-tracked)
+├── documents/                    # PDFs, reports, and project documentation
+
+├── scripts/                      # All pipeline scripts for data, model, judge, metrics, and bias analysis
+│   ├── preprocess_salad.py       # Preprocesses raw SALAD data into cleaned, standardized CSV
+│   ├── ge_runner.py              # Great Expectations validator (baseline + validation runs)
+│   ├── generate_model_responses.py  # Runs adversarial prompts through the victim LLM to produce responses
+│   ├── judge.py                  # LLM-as-a-Judge scoring logic for safety + refusal evaluation
+│   ├── judge_responses.py        # Orchestrates judgement creation for all model response CSVs
+│   ├── bias_detection.py         # Bias slicing + fairness analysis across groups/categories
+│   ├── additional_metrics.py     # Computes attack success, refusal stats, and other model metrics
+
+├── tests/                        # Unit tests for validation, preprocessing, and pipeline tasks
+├── .airflow.env                  # Airflow environment variables
+├── .dockerignore                 # Files excluded from Docker build
+├── .dvcignore                    # Files excluded from DVC tracking
+├── .gitignore                    # Git ignore rules
+├── README.md                     # Main project documentation
+├── docker-compose.yml            # Airflow + Postgres + Scheduler stack
+├── dvc.lock                      # Auto-generated DVC state file
+├── dvc.yaml                      # DVC pipeline definition
+├── project_overview.md           # High-level project summary
+├── pyproject.toml                # Python project + dependency configuration
+├── pytest.ini                    # Pytest configuration
+├── requirements-docker.txt       # Dependencies installed inside Docker
+├── requirements.txt              # Local development dependencies
+
 ```
 
 ---
