@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 from huggingface_hub import InferenceClient
-
+import shutil
 
 CONFIG_PATH = Path("config/attack_llm_config.json")
 PROMPT_COL = "prompt"
@@ -244,46 +244,53 @@ def run_model_response_generation() -> List[Dict[str, Any]]:
                 "meta_json": json.dumps(gen_params)
             })
 
-        # Append to existing file or create new one
+        # Filter rows to only include successful responses (status == "ok")
+        successful_rows = [row for row in rows if row.get("status") == "ok"]
+        failed_count = len(rows) - len(successful_rows)
+        
+        if failed_count > 0:
+            print(f"[INFO] Filtering out {failed_count} failed responses (status != 'ok') - will retry on next run")
+
+        # Append to existing file or create new one (only successful responses)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        if len(rows) > 0:
+        if len(successful_rows) > 0:
             if out_path.exists():
-                # Append new rows to existing CSV
+                # Append new successful rows to existing CSV
                 try:
                     existing_df = pd.read_csv(out_path)
-                    new_df = pd.DataFrame(rows)
+                    new_df = pd.DataFrame(successful_rows)
                     combined_df = pd.concat([existing_df, new_df], ignore_index=True)
                     combined_df.to_csv(out_path, index=False)
-                    print(f"[INFO] ✅ Appended {len(rows)} new responses to existing file: {out_path}")
+                    print(f"[INFO]  Appended {len(successful_rows)} successful responses to existing file: {out_path}")
                 except Exception as e:
                     # If append fails, create backup and write new file
                     backup_path = out_path.with_suffix(f'.backup_{int(time.time())}.csv')
                     print(f"[WARN] Failed to append, backing up existing file to {backup_path}")
                     if out_path.exists():
-                        import shutil
+                        
                         shutil.copy2(out_path, backup_path)
-                    pd.DataFrame(rows).to_csv(out_path, index=False)
-                    print(f"[INFO] ✅ Created new file with {len(rows)} responses: {out_path}")
+                    pd.DataFrame(successful_rows).to_csv(out_path, index=False)
+                    print(f"[INFO]  Created new file with {len(successful_rows)} responses: {out_path}")
             else:
                 # Create new file
-                pd.DataFrame(rows).to_csv(out_path, index=False)
-                print(f"[INFO] ✅ Created new file with {len(rows)} responses: {out_path}")
+                pd.DataFrame(successful_rows).to_csv(out_path, index=False)
+                print(f"[INFO]  Created new file with {len(successful_rows)} successful responses: {out_path}")
         else:
-            print(f"[INFO] No new responses to write for {name}")
+            print(f"[INFO] No successful responses to write for {name} (all {len(rows)} failed)")
 
         avg_latency = int(total_latency / ok) if ok else 0
         summaries.append({
             "model": model_id,
             "provider": m.get("provider", "router-default"),
-            "rows_written": len(rows),
+            "rows_written": len(successful_rows),  # Only count successful ones written to CSV
             "ok": ok,
             "errors": err,
             "avg_latency_ms": avg_latency,
             "output_file": str(out_path)
         })
 
-        print(f"✅ Completed {model_id} ({m.get('provider', 'router-default')}) → {out_path}")
-        print(f"   Summary: {ok} ok, {err} errors, {len(rows)} new rows written")
+        print(f" Completed {model_id} ({m.get('provider', 'router-default')}) → {out_path}")
+        print(f" Summary: {ok} ok, {err} errors, {len(successful_rows)} successful rows written to CSV")
 
     return summaries
 
