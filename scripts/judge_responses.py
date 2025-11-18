@@ -38,18 +38,23 @@ def process_single_csv(csv_path: str, out_path: str):
         return
 
     print(f"[INFO] Loaded {len(df)} rows.")
+    
+    # Filter out rows with missing/null responses before processing
+    df = df.dropna(subset=["response"])
+    df = df[df["response"].astype(str).str.strip() != ""]  # Also filter empty strings
+    print(f"[INFO] After filtering invalid responses: {len(df)} rows remaining.")
 
     existing_responses = set()
     if os.path.exists(out_path):
         try:
             judged_df = pd.read_csv(out_path)
             if "response" in judged_df.columns:
-                existing_responses = set(judged_df["response"].tolist())
+                existing_responses = set(judged_df["response"].astype(str).tolist())
                 print(f"[INFO] Found {len(existing_responses)} previously judged responses. Skipping duplicates.")
         except:
             pass
 
-    df_new = df[~df["response"].isin(existing_responses)]
+    df_new = df[~df["response"].astype(str).isin(existing_responses)]
 
     print(f"[INFO] {len(df_new)} new responses found to judge.")
 
@@ -63,12 +68,12 @@ def process_single_csv(csv_path: str, out_path: str):
         print("[INFO] Appending to existing judged CSV file.")
 
     for i, row in df_new.iterrows():
-        prompt = row["prompt"]
-        response = row["response"]
+        prompt = str(row["prompt"]) if pd.notna(row["prompt"]) else ""
+        response = str(row["response"]) if pd.notna(row["response"]) else ""
 
         print(f"\n---- ({i+1}/{len(df_new)}) Evaluating ----")
-        print(f"PROMPT: {prompt[:100]}...")
-        print(f"RESPONSE: {response[:100]}...")
+        print(f"PROMPT: {prompt[:100] if len(prompt) > 100 else prompt}...")
+        print(f"RESPONSE: {response[:100] if len(response) > 100 else response}...")
 
         result = judge_llm(prompt, response)
 
