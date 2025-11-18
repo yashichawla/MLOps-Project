@@ -1289,26 +1289,76 @@ def salad_ml_evaluation_pipeline_v1():
     )
 
     # Email: Model Judging Failure
-    email_failure_model_judging = EmailOperator(
+    def send_model_judging_failure_email(**context):
+        """Send model judging failure email only if judge_responses actually failed (not skipped)."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Check if judge_responses actually failed (not skipped)
+            judge_task_instance = dag_run.get_task_instance('judge_responses')
+            
+            # Only send email if task actually failed (not skipped or upstream_failed)
+            if not judge_task_instance or judge_task_instance.state not in ['failed']:
+                state = judge_task_instance.state if judge_task_instance else 'not found'
+                logger.info(
+                    f"judge_responses is in state '{state}', not 'failed'. "
+                    f"Skipping email. This is expected when upstream tasks fail or are skipped."
+                )
+                raise AirflowSkipException(f"Upstream task judge_responses is in state '{state}', not 'failed'. Skipping email.")
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            model_gen_result = ti.xcom_pull(task_ids='generate_model_responses', default=None)
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Model Judging Failed: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> judge_responses</p>
+                <p><b>Issue:</b> Failed to judge model responses using judge LLM.</p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Input CSV:</b> {csv_path}</p>"
+            
+            if model_gen_result:
+                html_content += "<p><b>Model Generation:</b> Completed successfully</p>"
+            
+            html_content += """
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>Groq API key missing or invalid (check GROQ_API_KEY environment variable)</li>
+                    <li>Judge LLM API rate limit exceeded</li>
+                    <li>Network connectivity issue</li>
+                    <li>Script execution error</li>
+                </ul>
+                <p><b>Action Required:</b> Check judge responses script logs and verify API credentials.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "judge_responses" task's "Log" for details.</p>
+            """
+            
+            # Send email
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Model Judging Failed",
+                html_content=html_content,
+                file_paths=None,
+            )
+            logger.info("Model judging failure email sent successfully")
+        except AirflowSkipException:
+            # Re-raise skip exceptions so task is properly skipped
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send model judging failure email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_failure_model_judging = PythonOperator(
         task_id="email_failure_model_judging",
-        to=["athatalnikar@gmail.com"],
-        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Model Judging Failed",
-        html_content="""
-            <h3>Model Judging Failed: {{ dag.dag_id }}</h3>
-            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
-            <p><b>Failed Task:</b> judge_responses</p>
-            <p><b>Issue:</b> Failed to judge model responses using judge LLM.</p>
-            <p><b>Possible Causes:</b></p>
-            <ul>
-                <li>Groq API key missing or invalid (check GROQ_API_KEY environment variable)</li>
-                <li>Judge LLM API rate limit exceeded</li>
-                <li>Network connectivity issue</li>
-                <li>Script execution error</li>
-            </ul>
-            <p><b>Action Required:</b> Check judge responses script logs and verify API credentials.</p>
-            <p><b>Tip:</b> In the Airflow UI, open the "judge_responses" task's "Log" for details.</p>
-        """,
-        trigger_rule=TriggerRule.ONE_FAILED,
+        python_callable=send_model_judging_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless, but function will skip if upstream wasn't actually failed
+        retries=0,  # Disable retries for email tasks
     )
 
     # Email: Additional Metrics Failure
