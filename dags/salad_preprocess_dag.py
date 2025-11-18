@@ -556,6 +556,7 @@ def salad_preprocess_v1():
             {% set model_gen = ti.xcom_pull(task_ids='generate_model_responses', default_var=None) %}
             {% set model_judge = ti.xcom_pull(task_ids='judge_responses', default_var=None) %}
             {% set model_metrics = ti.xcom_pull(task_ids='compute_additional_metrics', default_var=None) %}
+            {% set bias_detection = ti.xcom_pull(task_ids='compute_bias_detection', default_var=None) %}
             <p><b>Model Pipeline Status:</b></p>
             <ul>
                 {% if model_gen %}
@@ -572,6 +573,11 @@ def salad_preprocess_v1():
                 <li><b>Additional Metrics:</b> ✅ Executed successfully</li>
                 {% else %}
                 <li><b>Additional Metrics:</b> ⏭️ Skipped (data unchanged)</li>
+                {% endif %}
+                {% if bias_detection %}
+                <li><b>Bias Detection:</b> ✅ Executed successfully</li>
+                {% else %}
+                <li><b>Bias Detection:</b> ⏭️ Skipped (data unchanged)</li>
                 {% endif %}
             </ul>
             <p>Great job! ✔</p>
@@ -1159,6 +1165,83 @@ def salad_preprocess_v1():
         retries=0,  # Disable retries for email tasks
     )
 
+    # Email: Bias Detection Failure
+    def send_bias_detection_failure_email(**context):
+        """Send bias detection failure email only if compute_bias_detection actually failed (not skipped)."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Check if compute_bias_detection actually failed (not skipped)
+            bias_task_instance = dag_run.get_task_instance('compute_bias_detection')
+            
+            # Only send email if task actually failed (not skipped or upstream_failed)
+            if not bias_task_instance or bias_task_instance.state not in ['failed']:
+                state = bias_task_instance.state if bias_task_instance else 'not found'
+                logger.info(
+                    f"compute_bias_detection is in state '{state}', not 'failed'. "
+                    f"Skipping email. This is expected when upstream tasks fail or are skipped."
+                )
+                raise AirflowSkipException(f"Upstream task compute_bias_detection is in state '{state}', not 'failed'. Skipping email.")
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            model_gen_result = ti.xcom_pull(task_ids='generate_model_responses', default=None)
+            model_judge_result = ti.xcom_pull(task_ids='judge_responses', default=None)
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Bias Detection Failed: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> compute_bias_detection</p>
+                <p><b>Issue:</b> Failed to compute bias detection metrics from judged responses.</p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Input CSV:</b> {csv_path}</p>"
+            
+            if model_gen_result:
+                html_content += "<p><b>Model Generation:</b> Completed successfully</p>"
+            if model_judge_result:
+                html_content += "<p><b>Response Judging:</b> Completed successfully</p>"
+            
+            html_content += """
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>Missing judged responses CSV files</li>
+                    <li>Data format error in judged responses</li>
+                    <li>Missing required columns in judgements (prompt_id, prompt, response, safe, category, size_label, refusal_score)</li>
+                    <li>Script execution error</li>
+                    <li>File permission issues</li>
+                </ul>
+                <p><b>Action Required:</b> Check bias detection script logs and verify input files exist with correct format.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "compute_bias_detection" task's "Log" for details.</p>
+            """
+            
+            # Send email
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Bias Detection Failed",
+                html_content=html_content,
+                file_paths=None,
+            )
+            logger.info("Bias detection failure email sent successfully")
+        except AirflowSkipException:
+            # Re-raise skip exceptions so task is properly skipped
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send bias detection failure email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_failure_bias_detection = PythonOperator(
+        task_id="email_failure_bias_detection",
+        python_callable=send_bias_detection_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless, but function will skip if upstream wasn't actually failed
+        retries=0,  # Disable retries for email tasks
+    )
+
     # Email: DVC Push (final) Failure
     def send_dvc_push_final_failure_email(**context):
         """Send DVC push (final) failure email only if dvc_push_final actually failed."""
@@ -1365,6 +1448,38 @@ def salad_preprocess_v1():
             "stdout": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
         }
 
+    @task
+    def compute_bias_detection() -> dict:
+        """Compute bias detection metrics from judged responses."""
+        # Note: If generate_model_responses fails, this task will automatically skip
+        
+        script_path = REPO_ROOT / "scripts" / "bias_detection.py"
+        if not script_path.exists():
+            raise AirflowFailException(f"Bias detection script not found: {script_path}")
+        
+        logger.info("Running bias detection")
+        result = subprocess.run(
+            ["python", str(script_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,  # 5 minute timeout for bias detection
+        )
+        
+        if result.returncode != 0:
+            logger.error("Bias detection failed:\nSTDOUT: %s\nSTDERR: %s", result.stdout, result.stderr)
+            raise AirflowFailException(
+                f"Bias detection failed with exit code {result.returncode}. "
+                f"Check logs for details."
+            )
+        
+        logger.info("Bias detection completed successfully")
+        return {
+            "status": "success",
+            "stdout": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
+        }
+
     # Second DVC push: after model pipeline completes (will include model outputs when added to DVC)
     dvc_push_final = BashOperator(
         task_id="dvc_push_final",
@@ -1415,16 +1530,18 @@ def salad_preprocess_v1():
     validate_task >> email_validation_report
 
     # Model pipeline - uses config/attack_llm_config.json as input
-    # Model pipeline tasks run sequentially: model_gen >> model_judge >> model_metrics
+    # Model pipeline tasks run sequentially: model_gen >> model_judge >> [model_metrics, bias_detection]
+    # model_metrics and bias_detection run in parallel after model_judge completes
     # dvc_push_validation and model_gen can run in parallel after validation
-    # dvc_push_final waits for both model_metrics and dvc_push_validation to complete
+    # dvc_push_final waits for both model_metrics and bias_detection to complete
     model_gen = generate_model_responses()
     model_judge = judge_responses()  # Auto-skips if model_gen fails
     model_metrics = compute_additional_metrics()  # Auto-skips if model_gen fails
+    bias_detection = compute_bias_detection()  # Auto-skips if model_gen fails
     
     enforce_task >> [dvc_push_validation, model_gen]
-    model_gen >> model_judge >> model_metrics
-    model_metrics >> dvc_push_final >> email_success
+    model_gen >> model_judge >> [model_metrics, bias_detection]
+    [model_metrics, bias_detection] >> dvc_push_final >> email_success
 
     # Context-specific failure emails based on where failure occurs
     # Stage 1: DVC Pull failures
@@ -1453,6 +1570,7 @@ def salad_preprocess_v1():
     model_gen >> email_failure_model_generation
     model_judge >> email_failure_model_judging
     model_metrics >> email_failure_model_metrics
+    bias_detection >> email_failure_bias_detection
     
     # Stage 7: DVC Push (final) failures (only if model pipeline succeeded)
     dvc_push_final >> email_failure_dvc_push_final
