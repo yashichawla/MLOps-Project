@@ -361,7 +361,20 @@ GCP Project ID: break-the-bot
 
 Located in /documents/bias_detection_mitigation.md — explains bias definition, detection via data slicing, mitigation strategies, and fairness calibration.
 
-## 8. DAG Execution Timeline (Gannt Chart Overview)
+## 8. Additional Metrics
+
+This script computes extra evaluation metrics for each model after response generation and judging.
+The script is located at:
+scripts/additional_metrics.py
+
+It reads:
+Model responses from data/responses/
+Judge outputs from data/judge/
+
+and produces a metrics report for each model in:
+data/metrics/additional_metrics_<model>.json
+
+## 9. DAG Execution Timeline (Gannt Chart Overview)
 
 - The DAG starts with dvc_pull, which is the longest-running task (~15s) since it fetches tracked data from remote storage.
 - Set up tasks like ensure_dirs and ensure_config complete quickly (a few seconds each).
@@ -379,7 +392,7 @@ Located in /documents/bias_detection_mitigation.md — explains bias definition,
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
-## 9. Tests
+## 10. Tests
 Usage:
 To run the test suite, from repository root( uses `pytest.ini` with `testpaths = tests`):
 ```bash
