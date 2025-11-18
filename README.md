@@ -203,13 +203,23 @@ When TEST_MODE is enabled, the DAG skips preprocessing and validates the CSV spe
 
 **Task Dependency Sequence:**
 ```
-dvc_pull → ensure_dirs → ensure_config → preprocess_input_csv → validate_output → [report_validation_status, enforce_validation_policy] → (on success) dvc_push → email_success
+Data Pipeline:
+dvc_pull → ensure_dirs → ensure_config → preprocess_input_csv → validate_output → [report_validation_status, enforce_validation_policy]
+
+After validation:
+enforce_validation_policy → [dvc_push_validation, model_gen]
+
+Model Pipeline (sequential):
+model_gen → model_judge → model_metrics → dvc_push_final → email_success
 ```
 
 **Email Task Triggers:**
 - `email_validation_report`: Always runs after validation completes (TriggerRule.ALL_DONE)
-- `email_success`: Runs only if all tasks succeed (TriggerRule.ALL_SUCCESS)
-- `email_failure`: Runs if any task in the core path fails (TriggerRule.ONE_FAILED)
+- `email_success`: Runs only if all tasks succeed (TriggerRule.ALL_SUCCESS) - requires both data pipeline and model pipeline to complete
+- `email_failure_*`: Context-specific failure emails that run when specific tasks fail:
+  - Uses `PythonOperator` for model pipeline failures (checks if task actually failed, not skipped)
+  - Uses `EmailOperator` for other failures
+  - All use appropriate trigger rules (ALL_DONE or ONE_FAILED)
 
 ![DAG Pipeline Architecture](documents/DAG_Pipeline.jpg)
 
@@ -238,18 +248,22 @@ AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Generate Google App Password (
 
 The DAG now uses the unified validator's XCom output for all emails:
 
-| Trigger    | Email                 | Contents                         | Trigger Rule        |
-| ---------- | --------------------- | -------------------------------- | ------------------- |
-| Always     | **Validation Report** | JSON report + anomalies attached | ALL_DONE (runs regardless of task status) |
-| On Success | **✅ DAG Succeeded**  | Summary of counts and ranges     | ALL_SUCCESS (only if all upstream tasks succeed) |
-| On Failure | **❌ DAG Failed**     | Hard-fail reasons + report paths | ONE_FAILED (if any upstream task fails) |
+| Trigger    | Email                 | Contents                         | Trigger Rule        | Operator Type |
+| ---------- | --------------------- | -------------------------------- | ------------------- | ------------- |
+| Always     | **Validation Report** | JSON report + anomalies attached | ALL_DONE (runs regardless of task status) | EmailOperator |
+| On Success | **✅ DAG Succeeded**  | Summary of counts, ranges, and model pipeline status | ALL_SUCCESS (only if all upstream tasks succeed) | EmailOperator |
+| On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.) | ALL_DONE or ONE_FAILED | EmailOperator / PythonOperator |
 
 **Trigger Rules Explained:**
-- `ALL_DONE`: Task runs regardless of upstream task status (used for validation report)
+- `ALL_DONE`: Task runs regardless of upstream task status (used for validation report and failure emails that check task state)
 - `ALL_SUCCESS`: Task runs only if all upstream tasks succeed (used for success email)
-- `ONE_FAILED`: Task runs if any upstream task fails (used for failure email)
+- `ONE_FAILED`: Task runs if any upstream task fails (used for some failure emails)
 
-Recipients are configured in `salad_preprocess_dag.py` under each `EmailOperator`.
+**Email Operator Types:**
+- `EmailOperator`: Used for simple email notifications (success, validation report, basic failures)
+- `PythonOperator`: Used for context-aware failure emails (model pipeline failures) that check if tasks actually failed vs. were skipped
+
+Recipients are configured in `salad_preprocess_dag.py` under each email operator.
 
 To add more recipients, edit in salad_preprocess_dag.py:
 
@@ -352,7 +366,10 @@ Located in /documents/bias_detection_mitigation.md — explains bias definition,
 - preprocess_input_csv and validate_output are moderate in duration, taking several seconds depending on the dataset size.
 - Validation follow-ups (report_validation_status, enforce_validation_policy) run in parallel almost instantly after validation completes.
 - dvc_push is another longer task (~10–12s) as it uploads outputs and validation reports back to remote storage.
-- Notification tasks: email_validation_report always runs after validation; email_success runs only on full success; email_failure runs if any task fails.
+- Notification tasks: 
+  - `email_validation_report` always runs after validation (ALL_DONE)
+  - `email_success` runs only on full success when both data pipeline and model pipeline complete (ALL_SUCCESS)
+  - Context-specific failure emails (`email_failure_*`) run when specific tasks fail, with model pipeline failures using PythonOperator to check if tasks actually failed (not skipped)
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
