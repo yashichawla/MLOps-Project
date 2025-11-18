@@ -50,12 +50,13 @@ def _load_config() -> List[Dict[str, Any]]:
 
 
 def _load_prompts(csv_path: str, prompt_col: str = PROMPT_COL, meta_cols: Optional[List[str]] = None, sample: bool = False, n_samples: int = 5) -> pd.DataFrame:
-    """Load prompts (and optional metadata) from CSV; optionally take head(n_samples)."""
+    """Load prompts (and optional metadata) from CSV."""
     df = pd.read_csv(csv_path)
     meta_cols = meta_cols or DEFAULT_META_COLS
     keep = [prompt_col] + [c for c in meta_cols if c in df.columns]
     df = df[keep].dropna(subset=[prompt_col])
-    return df.head(n_samples) if sample else df
+    # Don't sample here - we'll sample AFTER filtering out processed prompts
+    return df
 
 
 def _normalize_prompt(prompt: str) -> str:
@@ -94,14 +95,20 @@ def _get_processed_prompts(out_path: Path, model_id: str) -> set:
         return set()
 
 
-def _filter_new_prompts(df: pd.DataFrame, processed_prompts: set, prompt_col: str = PROMPT_COL) -> pd.DataFrame:
+def _filter_new_prompts(df: pd.DataFrame, processed_prompts: set, prompt_col: str = PROMPT_COL, sample: bool = False, n_samples: int = 5) -> pd.DataFrame:
     """
     Filter DataFrame to only include prompts that haven't been processed yet for this model.
+    If sample=True, takes the first n_samples from the unprocessed prompts.
     Uses normalized prompt text for comparison.
     """
     if not processed_prompts:
-        print(f"[INFO] No existing responses found. Processing all {len(df)} prompts.")
-        return df
+        print(f"[INFO] No existing responses found.")
+        if sample:
+            print(f"[INFO] Sampling mode: taking first {n_samples} prompts from {len(df)} total.")
+            return df.head(n_samples)
+        else:
+            print(f"[INFO] Processing all {len(df)} prompts.")
+            return df
     
     # Normalize prompts in the input DataFrame
     df["_normalized_prompt"] = df[prompt_col].astype(str).apply(_normalize_prompt)
@@ -111,7 +118,16 @@ def _filter_new_prompts(df: pd.DataFrame, processed_prompts: set, prompt_col: st
     df_new = df_new.drop(columns=["_normalized_prompt"])
     
     skipped = len(df) - len(df_new)
-    print(f"[INFO] Filtered prompts: {len(df)} total, {skipped} already processed, {len(df_new)} new prompts to process.")
+    
+    # If sample mode, take first n_samples from the unprocessed prompts
+    if sample and len(df_new) > 0:
+        original_count = len(df_new)
+        df_new = df_new.head(n_samples)
+        sampled_count = len(df_new)
+        print(f"[INFO] Filtered prompts: {len(df)} total, {skipped} already processed, {original_count} unprocessed available.")
+        print(f"[INFO] Sampling mode: taking first {sampled_count} unprocessed prompts.")
+    else:
+        print(f"[INFO] Filtered prompts: {len(df)} total, {skipped} already processed, {len(df_new)} new prompts to process.")
     
     return df_new
 
@@ -156,17 +172,24 @@ def run_model_response_generation() -> List[Dict[str, Any]]:
         print(f"Running model: {name} ({model_id})")
         print(f"{'='*60}")
 
-        # Load all prompts from processed CSV
+        # Load ALL prompts from processed CSV (don't sample yet)
         df_all = _load_prompts(
             csv_path=m["csv_path"], 
-            sample=bool(m["sample"]), 
+            sample=False,  # Don't sample here - we'll do it after filtering
             n_samples=int(m["n_samples"])
         )
         
         # Check for existing responses and filter out already-processed prompts
         out_path = Path(m["out_path"])
         processed_prompts = _get_processed_prompts(out_path, model_id)
-        df = _filter_new_prompts(df_all, processed_prompts)
+        
+        # Filter out processed prompts, then sample if needed
+        df = _filter_new_prompts(
+            df_all, 
+            processed_prompts,
+            sample=bool(m["sample"]),  # Pass sample flag here
+            n_samples=int(m["n_samples"])
+        )
         
         if len(df) == 0:
             print(f"[INFO] All prompts already processed for {name}. Skipping API calls.")
