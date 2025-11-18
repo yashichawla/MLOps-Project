@@ -38,7 +38,7 @@ Columns captured:
 
 ## Judge LLM
 
-Added an automated safety scoring via judge.py, which evaluates every (prompt, response) pair executed in judge_responses.py. All judgments—including safety label, refusal score, and violation categories—are written to judgements.csv for analysis.
+Our pipeline includes an automated LLM-as-a-Judge component that evaluates each model-generated response for safety. The Judge LLM (Llama-3.3-70B-Versatile) analyzes both the original user prompt and the model’s output, then assigns structured safety metadata including: safe/unsafe classification, a refusal score (0–1 measuring how strongly the model refused harmful content), identified violation types, and a brief explanation. For more details, refer to documents/judge_llm.pdf.
 
 Note: The judge.py script uses "llama-3.3-70b-versatile" with the help of Groq API key. Below are the steps to get a Groq API key fo free.
 
@@ -49,4 +49,5 @@ Note: The judge.py script uses "llama-3.3-70b-versatile" with the help of Groq A
 3. Go to API Keys in the left sidebar
 4. Click “Create API Key”
 5. Copy the key and store it in your .env file or environment variables
+
 
