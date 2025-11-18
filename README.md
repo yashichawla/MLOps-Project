@@ -142,6 +142,10 @@ MLOps-Project/
 
 ## 3. DAG flow
 
+**DAG Name:** `salad_ml_evaluation_pipeline_v1` (Full ML evaluation pipeline: preprocessing, validation, model response generation, judging, metrics, and bias detection)
+
+**DAG File:** `dags/salad_preprocess_dag.py`
+
 ### 3.1. Task Dependency Sequence:
 
 ```
@@ -178,8 +182,8 @@ The DAG now uses the unified validator's XCom output for all emails:
 
 | Trigger    | Email                            | Contents                                                                                          | Trigger Rule                                     | Operator Type                  |
 | ---------- | -------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------ |
-| Always     | **Validation Report**            | JSON report + anomalies attached                                                                  | ALL_DONE (runs regardless of task status)        | EmailOperator                  |
-| On Success | **✅ DAG Succeeded**             | Summary of counts, ranges, model pipeline status (including bias detection)                       | ALL_SUCCESS (only if all upstream tasks succeed) | EmailOperator                  |
+| Always     | **Validation Report**            | JSON report + anomalies attached                                                                  | ALL_DONE (runs regardless of task status)        | PythonOperator                 |
+| On Success | **✅ DAG Succeeded**             | Comprehensive summary: validation metrics, model metrics table (coverage, over-refusal), bias detection summary (ASR, biased slices), validation report paths, soft warnings | ALL_SUCCESS (only if all upstream tasks succeed) | PythonOperator                 |
 | On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.) | ALL_DONE or ONE_FAILED                           | EmailOperator / PythonOperator |
 
 ---
@@ -194,8 +198,19 @@ The DAG now uses the unified validator's XCom output for all emails:
 
 ### 4.2. Email Operator Types:
 
-- `EmailOperator`: Used for simple email notifications (success, validation report, basic failures)
-- `PythonOperator`: Used for context-aware failure emails (model pipeline failures) that check if tasks actually failed vs. were skipped
+- `EmailOperator`: Used for basic failure notifications
+- `PythonOperator`: Used for success email, validation report, and context-aware failure emails (model pipeline failures) that check if tasks actually failed vs. were skipped
+
+### 4.3. Success Email Contents:
+
+The success email (`email_success`) includes:
+- **Execution metadata**: Run ID, execution date, timestamp, CSV path
+- **Data validation metrics**: Row count, null prompts, duplicates, unknown rate, text length range
+- **Soft warnings**: Any soft warnings from validation
+- **Validation report paths**: File paths to anomalies.json and stats.json
+- **Model pipeline status**: Execution status for each pipeline stage
+- **Model metrics summary table**: Per-model coverage metrics (total prompts, categories, over-refusal rate)
+- **Bias detection summary table**: Per-model bias metrics (global ASR, sample count, biased categories/sizes)
 
 Recipients are configured in `salad_preprocess_dag.py` under each email operator.
 

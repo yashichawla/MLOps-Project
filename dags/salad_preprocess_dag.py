@@ -99,8 +99,8 @@ def send_email_with_conditional_files(
 
 
 @dag(
-    dag_id="salad_preprocess_v1",
-    description="Unified preprocessing for Salad-Data + other sources via config (with Test Mode).",
+    dag_id="salad_ml_evaluation_pipeline_v1",
+    description="Full ML evaluation pipeline: preprocessing, validation, model response generation, judging, metrics, and bias detection.",
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
@@ -109,9 +109,9 @@ def send_email_with_conditional_files(
         "retry_delay": timedelta(minutes=5),
         "owner": "airflow",
     },
-    tags=["salad", "preprocessing", "v1", "mlops", "testmode"],
+    tags=["salad", "ml-evaluation", "pipeline", "v1", "mlops", "testmode"],
 )
-def salad_preprocess_v1():
+def salad_ml_evaluation_pipeline_v1():
 
     # Pull the latest versioned inputs from remote at the very start.
     dvc_pull = BashOperator(
@@ -534,55 +534,277 @@ def salad_preprocess_v1():
         retries=0,  # Disable retries for email tasks
     )
 
-    email_success = EmailOperator(
+    def send_success_email(**context):
+        """Send success email with comprehensive logging and error handling."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            execution_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            
+            logger.info("=" * 60)
+            logger.info("Starting email_success task")
+            logger.info(f"DAG: {dag.dag_id}, Run: {run_id}, Date: {ds}")
+            logger.info("=" * 60)
+            
+            # Get data from XCom with logging
+            logger.info("Fetching XCom data from upstream tasks...")
+            
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            logger.info(f"CSV path from XCom: {csv_path}")
+            
+            metrics = ti.xcom_pull(task_ids='validate_output', default=None)
+            if metrics:
+                logger.info(f"Validation metrics found: {list(metrics.keys())}")
+                logger.info(f"Row count: {metrics.get('row_count', 'N/A')}")
+                logger.info(f"Null prompts: {metrics.get('null_prompt_count', 'N/A')}")
+                logger.info(f"Duplicates: {metrics.get('dup_prompt_count', 'N/A')}")
+            else:
+                logger.warning("Validation metrics not found in XCom")
+            
+            model_gen = ti.xcom_pull(task_ids='generate_model_responses', default=None)
+            logger.info(f"Model generation result: {'Found' if model_gen else 'Not found'}")
+            
+            model_judge = ti.xcom_pull(task_ids='judge_responses', default=None)
+            logger.info(f"Model judging result: {'Found' if model_judge else 'Not found'}")
+            
+            model_metrics = ti.xcom_pull(task_ids='compute_additional_metrics', default=None)
+            logger.info(f"Additional metrics result: {'Found' if model_metrics else 'Not found'}")
+            
+            bias_detection = ti.xcom_pull(task_ids='compute_bias_detection', default=None)
+            logger.info(f"Bias detection result: {'Found' if bias_detection else 'Not found'}")
+            
+            # Load model configuration
+            logger.info("Loading model configuration...")
+            config_path = REPO_ROOT / "config" / "attack_llm_config.json"
+            models_config = []
+            if config_path.exists():
+                try:
+                    with open(config_path, 'r') as f:
+                        config_data = json.load(f)
+                        models_config = config_data.get('models', [])
+                    logger.info(f"Loaded {len(models_config)} models from config")
+                except Exception as e:
+                    logger.warning(f"Failed to load model config: {e}")
+            else:
+                logger.warning(f"Model config file not found: {config_path}")
+            
+            # Build HTML content
+            logger.info("Building email HTML content...")
+            html_content = f"""
+                <h3>DAG Succeeded: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id}</p>
+                <p><b>Execution Date:</b> {ds}</p>
+                <p><b>Execution Time:</b> {execution_time}</p>
+                <p><b>Selected CSV:</b> {csv_path if csv_path else 'N/A'}</p>
+            """
+            
+            # Data Validation Section
+            if metrics:
+                try:
+                    # Safe dictionary access with .get() and proper None checks
+                    row_count = metrics.get('row_count', 'N/A')
+                    null_prompt_count = metrics.get('null_prompt_count', 'N/A')
+                    dup_prompt_count = metrics.get('dup_prompt_count', 'N/A')
+                    unknown_rate = metrics.get('unknown_category_rate')
+                    text_len_min = metrics.get('text_len_min', 'N/A')
+                    text_len_max = metrics.get('text_len_max', 'N/A')
+                    soft_warn = metrics.get('soft_warn', [])
+                    
+                    # Format unknown_rate safely
+                    if unknown_rate is not None and isinstance(unknown_rate, (int, float)):
+                        unknown_rate_str = f"{unknown_rate:.3f}"
+                    else:
+                        unknown_rate_str = 'N/A'
+                    
+                    html_content += f"""
+                    <h4>Data Validation</h4>
+                    <ul>
+                        <li><b>Rows:</b> {row_count}</li>
+                        <li><b>Null Prompts:</b> {null_prompt_count}</li>
+                        <li><b>Duplicates:</b> {dup_prompt_count}</li>
+                        <li><b>Unknown rate:</b> {unknown_rate_str}</li>
+                        <li><b>Text length range:</b> {text_len_min}/{text_len_max}</li>
+                    </ul>
+                    """
+                    
+                    # Add soft warnings if any
+                    if soft_warn:
+                        html_content += f"<p><b>⚠️ Soft Warnings:</b></p><ul>"
+                        for warn in soft_warn:
+                            html_content += f"<li>{warn}</li>"
+                        html_content += "</ul>"
+                    
+                    # Add validation report paths
+                    report_paths = metrics.get('report_paths', [])
+                    if report_paths:
+                        html_content += "<p><b>Validation Reports:</b></p><ul>"
+                        for path in report_paths:
+                            html_content += f"<li><code>{path}</code></li>"
+                        html_content += "</ul>"
+                    
+                    logger.info("Added validation metrics to email")
+                except Exception as e:
+                    logger.warning(f"Error formatting validation metrics: {e}", exc_info=True)
+                    html_content += "<p><b>Data Validation:</b> Metrics available but formatting error occurred</p>"
+            else:
+                html_content += "<p><b>Data Validation:</b> Metrics not available</p>"
+                logger.warning("Validation metrics not available for email")
+            
+            # Model Pipeline Status
+            html_content += "<h4>Model Pipeline Status</h4><ul>"
+            
+            if model_gen:
+                html_content += "<li><b>Model Generation:</b> ✅ Executed successfully</li>"
+                logger.info("Model generation: Executed")
+            else:
+                html_content += "<li><b>Model Generation:</b> ⏭️ Skipped (data unchanged)</li>"
+                logger.info("Model generation: Skipped")
+            
+            if model_judge:
+                html_content += "<li><b>Response Judging:</b> ✅ Executed successfully</li>"
+                logger.info("Response judging: Executed")
+            else:
+                html_content += "<li><b>Response Judging:</b> ⏭️ Skipped (data unchanged)</li>"
+                logger.info("Response judging: Skipped")
+            
+            if model_metrics:
+                html_content += "<li><b>Additional Metrics:</b> ✅ Executed successfully</li>"
+                logger.info("Additional metrics: Executed")
+            else:
+                html_content += "<li><b>Additional Metrics:</b> ⏭️ Skipped (data unchanged)</li>"
+                logger.info("Additional metrics: Skipped")
+            
+            if bias_detection:
+                html_content += "<li><b>Bias Detection:</b> ✅ Executed successfully</li>"
+                logger.info("Bias detection: Executed")
+            else:
+                html_content += "<li><b>Bias Detection:</b> ⏭️ Skipped (data unchanged)</li>"
+                logger.info("Bias detection: Skipped")
+            
+            html_content += "</ul>"
+            
+            # Model Metrics Section
+            if models_config and model_metrics:
+                logger.info("Loading model metrics files...")
+                html_content += "<h4>Model Metrics Summary</h4>"
+                html_content += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse;'>"
+                html_content += "<tr><th>Model</th><th>Total Prompts</th><th>Categories</th><th>Over-Refusal Rate</th></tr>"
+                
+                models_with_metrics = 0
+                for model in models_config:
+                    model_name = model.get('name', 'Unknown')
+                    metrics_file = REPO_ROOT / "data" / "metrics" / f"additional_metrics_{model_name}.json"
+                    
+                    if metrics_file.exists():
+                        try:
+                            with open(metrics_file, 'r') as f:
+                                model_metrics_data = json.load(f)
+                            
+                            coverage = model_metrics_data.get('coverage_metrics', {})
+                            over_refusal = model_metrics_data.get('over_refusal_metrics', {})
+                            
+                            total_prompts = coverage.get('total_prompts', 'N/A')
+                            num_categories = coverage.get('num_categories', 'N/A')
+                            over_refusal_rate = over_refusal.get('over_refusal_rate', 'N/A')
+                            
+                            # Format over_refusal_rate
+                            if isinstance(over_refusal_rate, (int, float)):
+                                over_refusal_str = f"{over_refusal_rate:.3f}"
+                            else:
+                                over_refusal_str = str(over_refusal_rate)
+                            
+                            html_content += f"<tr><td>{model_name}</td><td>{total_prompts}</td><td>{num_categories}</td><td>{over_refusal_str}</td></tr>"
+                            models_with_metrics += 1
+                            logger.info(f"Loaded metrics for {model_name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to load metrics for {model_name}: {e}")
+                            html_content += f"<tr><td>{model_name}</td><td colspan='3'>Error loading metrics</td></tr>"
+                    else:
+                        logger.warning(f"Metrics file not found for {model_name}: {metrics_file}")
+                        html_content += f"<tr><td>{model_name}</td><td colspan='3'>Metrics not available</td></tr>"
+                
+                html_content += "</table>"
+                logger.info(f"Added metrics for {models_with_metrics} models")
+            
+            # Bias Detection Summary Section
+            if models_config and bias_detection:
+                logger.info("Loading bias detection reports...")
+                html_content += "<h4>Bias Detection Summary</h4>"
+                html_content += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse;'>"
+                html_content += "<tr><th>Model</th><th>Global ASR</th><th>Samples</th><th>Biased Categories</th><th>Biased Sizes</th></tr>"
+                
+                models_with_bias = 0
+                for model in models_config:
+                    model_name = model.get('name', 'Unknown')
+                    bias_file = REPO_ROOT / "data" / "bias" / model_name / "bias_report.json"
+                    
+                    if bias_file.exists():
+                        try:
+                            with open(bias_file, 'r') as f:
+                                bias_data = json.load(f)
+                            
+                            global_metrics = bias_data.get('global', {})
+                            biased_slices = bias_data.get('biased_slices', {})
+                            
+                            global_asr = global_metrics.get('asr', 'N/A')
+                            sample_count = global_metrics.get('count', 'N/A')
+                            biased_categories = len(biased_slices.get('category', []))
+                            biased_sizes = len(biased_slices.get('size_label', []))
+                            
+                            # Format ASR
+                            if isinstance(global_asr, (int, float)):
+                                asr_str = f"{global_asr:.3f}"
+                            else:
+                                asr_str = str(global_asr)
+                            
+                            html_content += f"<tr><td>{model_name}</td><td>{asr_str}</td><td>{sample_count}</td><td>{biased_categories}</td><td>{biased_sizes}</td></tr>"
+                            models_with_bias += 1
+                            logger.info(f"Loaded bias report for {model_name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to load bias report for {model_name}: {e}")
+                            html_content += f"<tr><td>{model_name}</td><td colspan='4'>Error loading bias report</td></tr>"
+                    else:
+                        logger.warning(f"Bias report not found for {model_name}: {bias_file}")
+                        html_content += f"<tr><td>{model_name}</td><td colspan='4'>Bias report not available</td></tr>"
+                
+                html_content += "</table>"
+                logger.info(f"Added bias summaries for {models_with_bias} models")
+            
+            html_content += "<p>Great job! ✔</p>"
+            
+            logger.info("Email HTML content built successfully")
+            logger.info(f"Email content length: {len(html_content)} characters")
+            
+            # Send email
+            logger.info("Sending success email...")
+            logger.info(f"Recipient: athatalnikar@gmail.com")
+            logger.info(f"Subject: [Airflow][{dag.dag_id}][{ds}] ✅ DAG Succeeded")
+            
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ✅ DAG Succeeded",
+                html_content=html_content,
+                file_paths=None,
+            )
+            
+            logger.info("=" * 60)
+            logger.info("✅ Success email sent successfully!")
+            logger.info("=" * 60)
+            
+        except Exception as e:
+            logger.error("=" * 60)
+            logger.error(f"❌ Failed to send success email: {e}", exc_info=True)
+            logger.error("=" * 60)
+            # Re-raise so the task fails and you can see the error in Airflow
+            raise
+
+    email_success = PythonOperator(
         task_id="email_success",
-        to=["athatalnikar@gmail.com"],
-        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ✅ DAG Succeeded",
-        html_content="""
-            <h3>DAG Succeeded: {{ dag.dag_id }}</h3>
-            <p><b>Run:</b> {{ run_id }}</p>
-            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv', default_var='N/A') }}</p>
-            {% set m = ti.xcom_pull(task_ids='validate_output') %}
-            {% if m %}
-            <p><b>Data Validation:</b></p>
-            <ul>
-                <li><b>Rows:</b> {{ m['row_count'] }}</li>
-                <li><b>Null Prompts:</b> {{ m['null_prompt_count'] }}</li>
-                <li><b>Duplicates:</b> {{ m['dup_prompt_count'] }}</li>
-                <li><b>Unknown rate:</b> {{ '%.3f'|format(m['unknown_category_rate']) }}</li>
-                <li><b>Text length range:</b> {{ m['text_len_min'] }}/{{ m['text_len_max'] }}</li>
-            </ul>
-            {% endif %}
-            {% set model_gen = ti.xcom_pull(task_ids='generate_model_responses', default_var=None) %}
-            {% set model_judge = ti.xcom_pull(task_ids='judge_responses', default_var=None) %}
-            {% set model_metrics = ti.xcom_pull(task_ids='compute_additional_metrics', default_var=None) %}
-            {% set bias_detection = ti.xcom_pull(task_ids='compute_bias_detection', default_var=None) %}
-            <p><b>Model Pipeline Status:</b></p>
-            <ul>
-                {% if model_gen %}
-                <li><b>Model Generation:</b> ✅ Executed successfully</li>
-                {% else %}
-                <li><b>Model Generation:</b> ⏭️ Skipped (data unchanged)</li>
-                {% endif %}
-                {% if model_judge %}
-                <li><b>Response Judging:</b> ✅ Executed successfully</li>
-                {% else %}
-                <li><b>Response Judging:</b> ⏭️ Skipped (data unchanged)</li>
-                {% endif %}
-                {% if model_metrics %}
-                <li><b>Additional Metrics:</b> ✅ Executed successfully</li>
-                {% else %}
-                <li><b>Additional Metrics:</b> ⏭️ Skipped (data unchanged)</li>
-                {% endif %}
-                {% if bias_detection %}
-                <li><b>Bias Detection:</b> ✅ Executed successfully</li>
-                {% else %}
-                <li><b>Bias Detection:</b> ⏭️ Skipped (data unchanged)</li>
-                {% endif %}
-            </ul>
-            <p>Great job! ✔</p>
-        """,
+        python_callable=send_success_email,
         trigger_rule=TriggerRule.ALL_SUCCESS,
+        retries=0,  # Disable retries for email tasks
     )
 
     # ── Context-Specific Failure Email Operators ────────────────────────────────
@@ -1576,4 +1798,4 @@ def salad_preprocess_v1():
     dvc_push_final >> email_failure_dvc_push_final
 
 
-dag = salad_preprocess_v1()
+dag = salad_ml_evaluation_pipeline_v1()
