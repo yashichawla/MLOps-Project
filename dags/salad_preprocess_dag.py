@@ -541,7 +541,7 @@ def salad_preprocess_v1():
         html_content="""
             <h3>DAG Succeeded: {{ dag.dag_id }}</h3>
             <p><b>Run:</b> {{ run_id }}</p>
-            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv') }}</p>
+            <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv', default_var='N/A') }}</p>
             {% set m = ti.xcom_pull(task_ids='validate_output') %}
             {% if m %}
             <p><b>Data Validation:</b></p>
@@ -992,30 +992,72 @@ def salad_preprocess_v1():
     )
 
     # Email: Model Generation Failure
-    email_failure_model_generation = EmailOperator(
+    def send_model_generation_failure_email(**context):
+        """Send model generation failure email only if generate_model_responses actually failed (not skipped)."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Check if generate_model_responses actually failed (not skipped)
+            model_gen_task_instance = dag_run.get_task_instance('generate_model_responses')
+            
+            # Only send email if task actually failed (not skipped or upstream_failed)
+            if not model_gen_task_instance or model_gen_task_instance.state not in ['failed']:
+                state = model_gen_task_instance.state if model_gen_task_instance else 'not found'
+                logger.info(
+                    f"generate_model_responses is in state '{state}', not 'failed'. "
+                    f"Skipping email. This is expected when upstream tasks fail or are skipped."
+                )
+                raise AirflowSkipException(f"Upstream task generate_model_responses is in state '{state}', not 'failed'. Skipping email.")
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Model Generation Failed: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> generate_model_responses</p>
+                <p><b>Issue:</b> Failed to generate model responses for prompts.</p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Input CSV:</b> {csv_path}</p>"
+            
+            html_content += """
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>HuggingFace API token missing or invalid (check HF_TOKEN environment variable)</li>
+                    <li>Model API rate limit exceeded</li>
+                    <li>Network connectivity issue</li>
+                    <li>Script execution error</li>
+                </ul>
+                <p><b>Action Required:</b> Check model generation script logs and verify API credentials.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "generate_model_responses" task's "Log" for details.</p>
+            """
+            
+            # Send email
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Model Generation Failed",
+                html_content=html_content,
+                file_paths=None,
+            )
+            logger.info("Model generation failure email sent successfully")
+        except AirflowSkipException:
+            # Re-raise skip exceptions so task is properly skipped
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send model generation failure email: {e}", exc_info=True)
+            # Don't re-raise - we don't want email failures to fail the DAG
+    
+    email_failure_model_generation = PythonOperator(
         task_id="email_failure_model_generation",
-        to=["athatalnikar@gmail.com"],
-        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Model Generation Failed",
-        html_content="""
-            <h3>Model Generation Failed: {{ dag.dag_id }}</h3>
-            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
-            <p><b>Failed Task:</b> generate_model_responses</p>
-            <p><b>Issue:</b> Failed to generate model responses for prompts.</p>
-            {% set csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default_var=None) %}
-            {% if csv_path %}
-            <p><b>Input CSV:</b> {{ csv_path }}</p>
-            {% endif %}
-            <p><b>Possible Causes:</b></p>
-            <ul>
-                <li>HuggingFace API token missing or invalid (check HF_TOKEN environment variable)</li>
-                <li>Model API rate limit exceeded</li>
-                <li>Network connectivity issue</li>
-                <li>Script execution error</li>
-            </ul>
-            <p><b>Action Required:</b> Check model generation script logs and verify API credentials.</p>
-            <p><b>Tip:</b> In the Airflow UI, open the "generate_model_responses" task's "Log" for details.</p>
-        """,
-        trigger_rule=TriggerRule.ONE_FAILED,
+        python_callable=send_model_generation_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,  # Run regardless, but function will skip if upstream wasn't actually failed
+        retries=0,  # Disable retries for email tasks
     )
 
     # Email: Model Judging Failure
