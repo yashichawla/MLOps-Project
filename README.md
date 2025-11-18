@@ -1,42 +1,61 @@
 # Break The Bot
 
 Find project overview, see [project_overview.md](./project_overview.md)
+
 ## 1. Quick Setup & Run Instructions
 
 Follow these steps in order to set up and run the complete project end-to-end.
 
-1.1. Clone Repository
+---
+
+### 1.1. Clone Repository
+
 ```bash
 git clone https://github.com/yashichawla/MLOps-Project
 cd MLOps-Project
 ```
 
-1.2. Create Virtual Environment
+---
+
+### 1.2. Create Virtual Environment
+
 ```bash
 python -m venv venv
 source venv/bin/activate   # Mac/Linux
 venv\Scripts\activate      # Windows
 ```
 
-1.3. Create Environment Files
-a) SMTP .env file (for email notifications)
+---
 
-Generate a new Google App Password for your account. 
+### 1.3. Create Environment Files
 
-Create a file named .env in the project root:
+a) .env file
+
+Generate a new Google App Password for your account. (for email notifications)
+
+Generate a read-only token at https://huggingface.co/settings/tokens. (for running prompts through a victim LLM)
+
+Generate Groq API Key at https://console.groq.com/, sign in using Google, GitHub, or email and create API Key.(for LLM as a Judge)
+
 ```bash
 AIRFLOW_SMTP_USER=your_email@gmail.com
 AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # 16-digit Google App Password
+HF_TOKEN=your_HF_TOKEN
+GROQ_API_KEY=your_groq_api
 ```
 
 b) GCP Secrets JSON (for DVC)
 
 Place the service account key JSON (provided by us in Canvas Submission Comments) inside:
+
 ```bash
 .secrets/gcp-key.json
 ```
 
-1.4. Initialize and Run Airflow with Docker
+---
+
+### 1.4. Initialize and Run Airflow with Docker
+
 ```bash
 # Create logs folder (recommended)
 mkdir -p airflow_artifacts/logs
@@ -59,23 +78,29 @@ Open the Airflow UI:
 You can update credentials in docker-compose.yml later.
 
 Stop services but keep data:
+
 ```bash
 docker compose down
 ```
 
 Completely remove containers, logs, and database volumes:
+
 ```bash
 docker compose down -v
 rm -rf airflow_artifacts/logs/*
 ```
 
-1.5. (Optional) Test Mode
+---
+
+### 1.5. (Optional) Test Mode
 
 If you want to skip preprocessing and only validate a CSV:
 
 In Airflow UI → Admin → Variables
 
 Set TEST_MODE = true
+
+---
 
 ## 2. Repository Structure
 
@@ -111,97 +136,12 @@ MLOps-Project/
 └── README.md
 ```
 
-### Setup Instructions:
+---
 
-1. Clone Repository
+## 3. DAG flow
 
-```bash
-git clone https://github.com/yashichawla/MLOps-Project
-cd MLOps-Project
-```
+### 3.1. Task Dependency Sequence:
 
-2. Create Virtual Environment
-
-```bash
-   python -m venv venv
-   source venv/bin/activate # On Mac/Linux
-   venv\Scripts\activate # On Windows
-```
-
-### Features:
-
-- Evaluator Service: Runs prompts against target models and logs results.
-- Judge Service: Scores responses for safety and refusal quality.
-- Dashboards: Grafana visualizations for safety trends, ASR, and alerts.
-- CI/CD Integration: Blocks unsafe deployments if safety metrics fail.
-- Failure Analysis: Clustering and regression testing of jailbreak cases.
-
-### Key Metrics:
-
-- Attack Success Rate (ASR) - % of successful jailbreaks.
-- Refusal Quality - judged clarity and robustness of refusals.
-- Coverage Metrics - number and diversity of tested adversarial prompts.
-
-### Project Timeline:
-
-- Week 1-2: Repo setup, governance policy, seed prompt generation.
-- Week 3-4: Prompt generator + evaluator API.
-- Week 5-6: Judge API + calibration with human labels.
-- Week 7-8: Dashboards, monitoring, failure analysis.
-- Week 9-10: CI/CD gates, final validation, and reporting.
-
-### Setting up and running Airflow (with Docker)
-
-```bash
-# Navigate to project root
-cd MLOps-Project
-
-# (Optional but recommended) Create logs folder
-mkdir -p airflow_artifacts/logs
-
-# Initialize Airflow database + admin user in Docker
-docker compose run --rm airflow-init
-# Only for setup, after that just need to use compose up
-
-#Start Airflow (Webserver + Scheduler + Postgres)
-docker compose up -d webserver scheduler
-```
-
-Then open the UI:
-
-📍 http://localhost:8080
-
-👤 Username: admin
-🔑 Password: admin
-
-(This can be changed in docker-compose later if needed.)
-
-To stop services but keep the database & logs:
-
-```bash
-docker compose down
-```
-
-To stop and remove everything (Postgres DB, logs, container volumes):
-
-```bash
-docker compose down -v       # removes DB volume
-rm -rf airflow_artifacts/logs/*
-```
-
-### Airflow Test Mode (Validation-only workflow)
-
-Use this when you want to skip preprocessing and only validate a CSV.
-
-In the Airflow UI, open Admin → Variables, and set:
-- `TEST_MODE` to `true` to activate test mode (default: `false`)
-- `TEST_CSV_PATH` to the path of your test CSV (default: `data/test_validation/test.csv`)
-
-When TEST_MODE is enabled, the DAG skips preprocessing and validates the CSV specified in TEST_CSV_PATH instead.
-
-#### DAG flow
-
-**Task Dependency Sequence:**
 ```
 Data Pipeline:
 dvc_pull → ensure_dirs → ensure_config → preprocess_input_csv → validate_output → [report_validation_status, enforce_validation_policy]
@@ -215,7 +155,10 @@ model_gen → model_judge → [model_metrics, bias_detection] → dvc_push_final
 Note: model_metrics (additional_metrics.py) and bias_detection (bias_detection.py) run in parallel after model_judge completes.
 ```
 
-**Email Task Triggers:**
+---
+
+### 3.2 Email Task Triggers:
+
 - `email_validation_report`: Always runs after validation completes (TriggerRule.ALL_DONE)
 - `email_success`: Runs only if all tasks succeed (TriggerRule.ALL_SUCCESS) - requires both data pipeline and model pipeline to complete
 - `email_failure_*`: Context-specific failure emails that run when specific tasks fail:
@@ -223,45 +166,32 @@ Note: model_metrics (additional_metrics.py) and bias_detection (bias_detection.p
   - Uses `EmailOperator` for other failures
   - All use appropriate trigger rules (ALL_DONE or ONE_FAILED)
 
-![DAG Pipeline Architecture](documents/DAG_Pipeline.jpg)
+![DAG Pipeline Architecture](documents/model_pipeline_dvc.png)
 
-# Validation Source of Truth
+---
 
-- `scripts/ge_runner.py` is the single validator used by the Airflow DAG.
-- The DAG invokes:
-  - `python scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` and `data/metrics/stats/baseline/stats.json` if missing; baseline stats.json is used for drift detection in subsequent validations)
-  - `python scripts/ge_runner.py validate --input <csv> --baseline_schema <path> --date YYYYMMDD`
-- **Note:** Baseline is automatically created if missing during the first validation run.
-- Validation artifacts (source of truth):
-  - `data/metrics/stats/YYYYMMDD/stats.json` (includes row_count, null/dup counts, unknown_category_rate, text_len_min/max, size_label_mismatch_count)
-  - `data/metrics/validation/YYYYMMDD/anomalies.json` (contains metadata, summary, hard_fail, and soft_warn sections; metadata includes validation timestamp/source, summary includes validation_status and counts)
-- Airflow reads these files to construct the XCom metrics used for gating and email reports.
-
-### SMTP Setup (Gmail)
-
-Create .env file in project root:
-
-```in
-AIRFLOW_SMTP_USER=your_email@gmail.com
-AIRFLOW_SMTP_PASSWORD=your_gmail_app_password   # Generate Google App Password (16 digit code)
-```
-
-## 📧 Email Notifications (automatic)
+## 4. Email Notifications (automatic)
 
 The DAG now uses the unified validator's XCom output for all emails:
 
-| Trigger    | Email                 | Contents                         | Trigger Rule        | Operator Type |
-| ---------- | --------------------- | -------------------------------- | ------------------- | ------------- |
-| Always     | **Validation Report** | JSON report + anomalies attached | ALL_DONE (runs regardless of task status) | EmailOperator |
-| On Success | **✅ DAG Succeeded**  | Summary of counts, ranges, model pipeline status (including bias detection) | ALL_SUCCESS (only if all upstream tasks succeed) | EmailOperator |
-| On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.) | ALL_DONE or ONE_FAILED | EmailOperator / PythonOperator |
+| Trigger    | Email                            | Contents                                                                                          | Trigger Rule                                     | Operator Type                  |
+| ---------- | -------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------ |
+| Always     | **Validation Report**            | JSON report + anomalies attached                                                                  | ALL_DONE (runs regardless of task status)        | EmailOperator                  |
+| On Success | **✅ DAG Succeeded**             | Summary of counts, ranges, model pipeline status (including bias detection)                       | ALL_SUCCESS (only if all upstream tasks succeed) | EmailOperator                  |
+| On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.) | ALL_DONE or ONE_FAILED                           | EmailOperator / PythonOperator |
 
-**Trigger Rules Explained:**
+---
+
+### 4.1. Trigger Rules Explained:
+
 - `ALL_DONE`: Task runs regardless of upstream task status (used for validation report and failure emails that check task state)
 - `ALL_SUCCESS`: Task runs only if all upstream tasks succeed (used for success email)
 - `ONE_FAILED`: Task runs if any upstream task fails (used for some failure emails)
 
-**Email Operator Types:**
+---
+
+### 4.2. Email Operator Types:
+
 - `EmailOperator`: Used for simple email notifications (success, validation report, basic failures)
 - `PythonOperator`: Used for context-aware failure emails (model pipeline failures) that check if tasks actually failed vs. were skipped
 
@@ -273,7 +203,9 @@ To add more recipients, edit in salad_preprocess_dag.py:
 to=["athatalnikar@gmail.com", "additional@email.com", "..."]
 ```
 
-## 5. Validation Source of Truth
+---
+
+## 5. Validation Source of Truth (Required for data pipeline submission)
 
 - `scripts/ge_runner.py` is the validator used by the Airflow DAG.
 - The DAG invokes:
@@ -283,6 +215,8 @@ to=["athatalnikar@gmail.com", "additional@email.com", "..."]
   - `data/metrics/stats/YYYYMMDD/stats.json` (includes row_count, null/dup counts, unknown_category_rate, text_len_min/max, size_label_mismatch_count)
   - `data/metrics/validation/YYYYMMDD/anomalies.json` (hard_fail, soft_warn, info)
 - Airflow reads these files to construct the XCom metrics used for gating and email reports.
+
+---
 
 ## 6. DVC Usage Guide
 
@@ -298,47 +232,7 @@ data/metrics/validation
 
 These are stored remotely in a GCS bucket and automatically synchronized through Airflow tasks (dvc pull / dvc push) running inside Docker.
 
-### 🔐 2. Authentication via Service Account Key
-
-This setup uses a GCP service account key mounted securely into the Airflow containers.
-
-Steps (one-time):
-
-1. Place the service account key JSON (provided by us in Canvas Submission Comments) inside. :
-   .secrets/gcp-key.json
-
-2. The Docker Compose file mounts it automatically:
-
-```yaml
-volumes:
-  - ./.secrets/gcp-key.json:/opt/airflow/secrets/gcp-key.json:ro
-environment:
-  GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
-```
-
-3. DVC and all Airflow tasks use this environment variable for authentication to GCS.
-
-### 🧱 3. Running Inside Airflow (Containerized)
-
-The Airflow DAG (salad_preprocess_dag.py) orchestrates:
-
-- dvc pull at pipeline start — ensures the latest data version is fetched.
-- Preprocessing & validation tasks.
-- dvc push after completion — uploads new artifacts to the GCS remote
-
-All commands run automatically inside the Airflow Docker containers — no CLI interaction is needed.
-
-For Local Debugging (Optional)
-
-If you wish to run DVC manually outside Docker:
-
-```bash
-pip install -r requirements.txt
-$env:GOOGLE_APPLICATION_CREDENTIALS = "D:\MLOps-Project\.secrets\gcp-key.json"
-dvc pull       # fetch data from GCS
-dvc repro      # rebuild pipeline
-dvc push       # upload results
-```
+---
 
 ### 6.1 When You Modify the Pipeline or Data
 
@@ -350,6 +244,8 @@ dvc push
 git push
 ```
 
+---
+
 ### 6.2 Remote Storage Details
 
 ```text
@@ -357,31 +253,22 @@ GCS Bucket: gs://mlops-project-dvc
 GCP Project ID: break-the-bot
 ```
 
-## 7. Bias Detection & Mitigation Document
+---
+
+## 7. Bias Detection & Mitigation Document (Required for data pipeline submission)
 
 Located in /documents/bias_detection_mitigation.md — explains bias definition, detection via data slicing, mitigation strategies, and fairness calibration.
 
-## 8. Additional Metrics
+---
 
-This script computes extra evaluation metrics for each model after response generation and judging.
-The script is located at:
-scripts/additional_metrics.py
-
-It reads:
-Model responses from data/responses/
-Judge outputs from data/judge/
-
-and produces a metrics report for each model in:
-data/metrics/additional_metrics_<model>.json
-
-## 9. DAG Execution Timeline (Gannt Chart Overview)
+## 8. DAG Execution Timeline (Gannt Chart Overview) (Required for data pipeline submission)
 
 - The DAG starts with dvc_pull, which is the longest-running task (~15s) since it fetches tracked data from remote storage.
 - Set up tasks like ensure_dirs and ensure_config complete quickly (a few seconds each).
 - preprocess_input_csv and validate_output are moderate in duration, taking several seconds depending on the dataset size.
 - Validation follow-ups (report_validation_status, enforce_validation_policy) run in parallel almost instantly after validation completes.
 - dvc_push is another longer task (~10–12s) as it uploads outputs and validation reports back to remote storage.
-- Notification tasks: 
+- Notification tasks:
   - `email_validation_report` always runs after validation (ALL_DONE)
   - `email_success` runs only on full success when both data pipeline and model pipeline complete (ALL_SUCCESS)
   - Context-specific failure emails (`email_failure_*`) run when specific tasks fail, with model pipeline failures (including bias_detection) using PythonOperator to check if tasks actually failed (not skipped)
@@ -392,18 +279,77 @@ data/metrics/additional_metrics_<model>.json
 
 ![Airflow DAG Gantt Chart](documents/airflow_gantt.jpeg)
 
-## 10. Tests
+---
+
+## 9. Tests (Required for data pipeline submission)
+
 Usage:
 To run the test suite, from repository root( uses `pytest.ini` with `testpaths = tests`):
+
 ```bash
 pytest -q
 ```
 
-To execute a single file: 
+To execute a single file:
+
 ```bash
 pytest MLOps-Project/tests/test_preprocess_salad.py -q
 ```
+
 Artifacts: GE validation tests write JSON to `data/metrics/stats/<date>/stats.json` and `data/metrics/validation/<date>/anomalies.json`.
 
+Here is the **short, clean Section 11** exactly in the style of the rest of your README.
 
+No commands, no API setup, no extras — just what was done + placeholders.
 
+---
+
+## 10. Model Pipeline (As part of model pipeline submission)
+
+We now have **four additional scripts** that complete the model-processing workflow end-to-end. Alongwith DVC and DAG changes.
+Below is a short summary of each, with placeholder names and corresponding output files.
+
+### 10.1 Run Adversarial Prompts Through Model
+
+**Script:** `scripts/generate_model_responses.py`
+
+**Output:** `data/responses/model_responses_<model_name>.csv`
+
+Runs all adversarial prompts (from the processed SALAD dataset) through the selected victim LLM and stores the raw model responses along with metadata (latency, status, size labels, etc.).
+
+---
+
+### 10.2 Judge LLM — Evaluate Responses for Safety
+
+**Utils script:** `scripts/judge.py`
+
+**Script:** `scripts/judge_responses.py`
+
+**Output:** ``data/judge/judgements_<model_name>.csv`
+
+Takes each **(prompt, response)** pair and sends it to the Judge LLM to score safety, refusal strength, violation types, and explanation.
+More details in: `documents/judge_llm.pdf`.
+
+---
+
+### 10.3 Bias Detection Module
+
+**Script:** `scripts/bias_detection.py`
+
+**Output:** ``data/bias/bias_report_<model_name>.json`
+
+Runs bias-slicing analysis on the judged responses to detect disparities across categories and demographic slices.
+More detailed methodology reference: `documents/bias_stats.md`.
+
+---
+
+### 10.4 Model Metrics Computation
+
+**Script:** `scripts/additional_metrics.py`
+
+**Output:** `data/metrics/additional_metrics_<model_name>.json`
+
+Computes <>.
+Detailed metric definitions at: `documents/additional_metrcis.pdf`.
+
+---
