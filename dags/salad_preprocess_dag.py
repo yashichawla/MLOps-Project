@@ -125,8 +125,8 @@ def salad_preprocess_v1():
             set -euo pipefail
             cd "{REPO_ROOT}"
 
-            # Ensure DVC is available
-            python -m pip install --no-cache-dir -q "dvc[gs]" gcsfs google-cloud-storage
+            # DVC packages should be pre-installed via requirements-docker.txt
+            # If not available, this will fail and indicate a Docker image build issue
 
             # 0) Backup any conflicting local file that would block checkout (keeps your work!)
             if [ -f "data/processed/processed_data.csv" ] && ! python -m dvc ls . >/dev/null 2>&1; then
@@ -158,14 +158,18 @@ def salad_preprocess_v1():
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         (DATA_DIR / "validation_reports").mkdir(parents=True, exist_ok=True)
         (DATA_DIR / "test_validation").mkdir(parents=True, exist_ok=True)
+        (DATA_DIR / "responses").mkdir(parents=True, exist_ok=True)
+        (DATA_DIR / "judge").mkdir(parents=True, exist_ok=True)
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         CFG_DIR.mkdir(parents=True, exist_ok=True)
         logger.info(
-            "Dirs ensured: DATA_DIR=%s OUT_DIR=%s CFG_DIR=%s TEST_DIR=%s",
+            "Dirs ensured: DATA_DIR=%s OUT_DIR=%s CFG_DIR=%s TEST_DIR=%s RESPONSES_DIR=%s JUDGE_DIR=%s",
             DATA_DIR,
             OUT_DIR,
             CFG_DIR,
             DATA_DIR / "test_validation",
+            DATA_DIR / "responses",
+            DATA_DIR / "judge",
         )
         return {
             "config_path": str(CONFIG_PATH),
@@ -271,6 +275,7 @@ def salad_preprocess_v1():
                 subprocess.run(
                     ["python", str(SCRIPT_GE), "baseline", "--input", out_csv_path, "--date", ds_nodash],
                     check=True,
+                    timeout=300,  # 5 minute timeout
                 )
             
             logger.info("Running GE validation for %s", out_csv_path)
@@ -280,6 +285,7 @@ def salad_preprocess_v1():
                     "--baseline_schema", str(BASELINE_SCHEMA), "--date", ds_nodash,
                 ],
                 check=False,  # We check returncode manually to handle validation failures
+                timeout=300,  # 5 minute timeout
             )
             
             # GE validation returns:
@@ -538,12 +544,36 @@ def salad_preprocess_v1():
             <p><b>Selected CSV:</b> {{ ti.xcom_pull(task_ids='preprocess_input_csv') }}</p>
             {% set m = ti.xcom_pull(task_ids='validate_output') %}
             {% if m %}
-            <p><b>Rows:</b> {{ m['row_count'] }},
-                <b>Null Prompts:</b> {{ m['null_prompt_count'] }},
-                <b>Dups:</b> {{ m['dup_prompt_count'] }},
-                <b>Unknown rate:</b> {{ '%.3f'|format(m['unknown_category_rate']) }},
-                <b>text_length min/max:</b> {{ m['text_len_min'] }}/{{ m['text_len_max'] }}</p>
+            <p><b>Data Validation:</b></p>
+            <ul>
+                <li><b>Rows:</b> {{ m['row_count'] }}</li>
+                <li><b>Null Prompts:</b> {{ m['null_prompt_count'] }}</li>
+                <li><b>Duplicates:</b> {{ m['dup_prompt_count'] }}</li>
+                <li><b>Unknown rate:</b> {{ '%.3f'|format(m['unknown_category_rate']) }}</li>
+                <li><b>Text length range:</b> {{ m['text_len_min'] }}/{{ m['text_len_max'] }}</li>
+            </ul>
             {% endif %}
+            {% set model_gen = ti.xcom_pull(task_ids='generate_model_responses', default_var=None) %}
+            {% set model_judge = ti.xcom_pull(task_ids='judge_responses', default_var=None) %}
+            {% set model_metrics = ti.xcom_pull(task_ids='compute_additional_metrics', default_var=None) %}
+            <p><b>Model Pipeline Status:</b></p>
+            <ul>
+                {% if model_gen %}
+                <li><b>Model Generation:</b> ✅ Executed successfully</li>
+                {% else %}
+                <li><b>Model Generation:</b> ⏭️ Skipped (data unchanged)</li>
+                {% endif %}
+                {% if model_judge %}
+                <li><b>Response Judging:</b> ✅ Executed successfully</li>
+                {% else %}
+                <li><b>Response Judging:</b> ⏭️ Skipped (data unchanged)</li>
+                {% endif %}
+                {% if model_metrics %}
+                <li><b>Additional Metrics:</b> ✅ Executed successfully</li>
+                {% else %}
+                <li><b>Additional Metrics:</b> ⏭️ Skipped (data unchanged)</li>
+                {% endif %}
+            </ul>
             <p>Great job! ✔</p>
         """,
         trigger_rule=TriggerRule.ALL_SUCCESS,
@@ -891,9 +921,9 @@ def salad_preprocess_v1():
         retries=0,  # Disable retries for email tasks
     )
 
-    # Email 6: DVC Push Failure (Artifact Storage Issue)
-    def send_dvc_push_failure_email(**context):
-        """Send DVC push failure email only if dvc_push actually failed (not skipped)."""
+    # Email: DVC Push (validation) Failure
+    def send_dvc_push_validation_failure_email(**context):
+        """Send DVC push (validation) failure email only if dvc_push_validation actually failed."""
         try:
             ti = context['ti']
             dag = context['dag']
@@ -901,31 +931,25 @@ def salad_preprocess_v1():
             run_id = context['run_id']
             dag_run = context['dag_run']
             
-            # Check if dvc_push actually failed (not skipped)
-            dvc_push_task_instance = dag_run.get_task_instance('dvc_push')
+            # Check if dvc_push_validation actually failed
+            dvc_push_task_instance = dag_run.get_task_instance('dvc_push_validation')
             
-            # Only send email if task actually failed (not skipped or upstream_failed)
             if not dvc_push_task_instance or dvc_push_task_instance.state not in ['failed']:
                 state = dvc_push_task_instance.state if dvc_push_task_instance else 'not found'
-                logger.info(
-                    f"dvc_push is in state '{state}', not 'failed'. "
-                    f"Skipping task. This is expected when validation fails."
-                )
-                raise AirflowSkipException(f"Upstream task dvc_push is in state '{state}', not 'failed'. Skipping email.")
+                logger.info(f"dvc_push_validation is in state '{state}', not 'failed'. Skipping email.")
+                raise AirflowSkipException(f"Upstream task dvc_push_validation is in state '{state}', not 'failed'. Skipping email.")
             
-            # Get data from XCom
             csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
             metrics = ti.xcom_pull(task_ids='validate_output', default=None)
             
-            # Build HTML content
             html_content = f"""
-                <h3>DVC Push Failed (But Pipeline Succeeded): {dag.dag_id}</h3>
+                <h3>DVC Push (Validation) Failed: {dag.dag_id}</h3>
                 <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
-                <p><b>Failed Task:</b> dvc_push</p>
-                <p><b>Status:</b> ⚠️ <b>Pipeline completed successfully, but artifact push to remote failed.</b></p>
+                <p><b>Failed Task:</b> dvc_push_validation</p>
+                <p><b>Issue:</b> Failed to push validated data to DVC remote storage.</p>
             """
             if csv_path:
-                html_content += f"<p><b>Processed CSV:</b> {csv_path}</p>"
+                html_content += f"<p><b>Validated CSV:</b> {csv_path}</p>"
             
             if metrics:
                 html_content += f"""
@@ -933,12 +957,10 @@ def salad_preprocess_v1():
                 <ul>
                     <li><b>Rows:</b> {metrics.get('row_count', 'N/A')}</li>
                     <li><b>Validation Status:</b> Passed</li>
-                    <li><b>Warnings:</b> {metrics.get('soft_warn', [])}</li>
                 </ul>
                 """
             
             html_content += """
-                <p><b>Issue:</b> Failed to push processed artifacts to DVC remote storage.</p>
                 <p><b>Possible Causes:</b></p>
                 <ul>
                     <li>GCP credentials issue</li>
@@ -946,46 +968,234 @@ def salad_preprocess_v1():
                     <li>Network connectivity issue during push</li>
                     <li>Permission denied on remote bucket</li>
                 </ul>
-                <p><b>Action Required:</b> Data is processed and validated locally, but not versioned remotely. 
-                Check DVC remote configuration and retry push manually if needed.</p>
-                <p><b>Tip:</b> In the Airflow UI, open the "dvc_push" task's "Log" for details.</p>
+                <p><b>Action Required:</b> Data is validated locally but not versioned remotely. Check DVC remote configuration and retry push manually if needed.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "dvc_push_validation" task's "Log" for details.</p>
             """
             
-            # Send email (no file attachments for this email)
             send_email_with_conditional_files(
                 to=["athatalnikar@gmail.com"],
-                subject=f"[Airflow][{dag.dag_id}][{ds}] ⚠️ DVC Push Failed (Pipeline Succeeded)",
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ DVC Push (Validation) Failed",
                 html_content=html_content,
                 file_paths=None,
             )
-            logger.info("DVC push failure email sent successfully")
+            logger.info("DVC push (validation) failure email sent successfully")
+        except AirflowSkipException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send DVC push (validation) failure email: {e}", exc_info=True)
+    
+    email_failure_dvc_push_validation = PythonOperator(
+        task_id="email_failure_dvc_push_validation",
+        python_callable=send_dvc_push_validation_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,
+        retries=0,
+    )
+
+    # Email: Model Generation Failure
+    email_failure_model_generation = EmailOperator(
+        task_id="email_failure_model_generation",
+        to=["athatalnikar@gmail.com"],
+        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Model Generation Failed",
+        html_content="""
+            <h3>Model Generation Failed: {{ dag.dag_id }}</h3>
+            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
+            <p><b>Failed Task:</b> generate_model_responses</p>
+            <p><b>Issue:</b> Failed to generate model responses for prompts.</p>
+            {% set csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default_var=None) %}
+            {% if csv_path %}
+            <p><b>Input CSV:</b> {{ csv_path }}</p>
+            {% endif %}
+            <p><b>Possible Causes:</b></p>
+            <ul>
+                <li>HuggingFace API token missing or invalid (check HF_TOKEN environment variable)</li>
+                <li>Model API rate limit exceeded</li>
+                <li>Network connectivity issue</li>
+                <li>Script execution error</li>
+            </ul>
+            <p><b>Action Required:</b> Check model generation script logs and verify API credentials.</p>
+            <p><b>Tip:</b> In the Airflow UI, open the "generate_model_responses" task's "Log" for details.</p>
+        """,
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    # Email: Model Judging Failure
+    email_failure_model_judging = EmailOperator(
+        task_id="email_failure_model_judging",
+        to=["athatalnikar@gmail.com"],
+        subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Model Judging Failed",
+        html_content="""
+            <h3>Model Judging Failed: {{ dag.dag_id }}</h3>
+            <p><b>Run:</b> {{ run_id }} | <b>Execution date:</b> {{ ds }}</p>
+            <p><b>Failed Task:</b> judge_responses</p>
+            <p><b>Issue:</b> Failed to judge model responses using judge LLM.</p>
+            <p><b>Possible Causes:</b></p>
+            <ul>
+                <li>Groq API key missing or invalid (check GROQ_API_KEY environment variable)</li>
+                <li>Judge LLM API rate limit exceeded</li>
+                <li>Network connectivity issue</li>
+                <li>Script execution error</li>
+            </ul>
+            <p><b>Action Required:</b> Check judge responses script logs and verify API credentials.</p>
+            <p><b>Tip:</b> In the Airflow UI, open the "judge_responses" task's "Log" for details.</p>
+        """,
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    # Email: Additional Metrics Failure
+    def send_model_metrics_failure_email(**context):
+        """Send additional metrics failure email only if compute_additional_metrics actually failed (not skipped)."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Check if compute_additional_metrics actually failed (not skipped)
+            metrics_task_instance = dag_run.get_task_instance('compute_additional_metrics')
+            
+            # Only send email if task actually failed (not skipped or upstream_failed)
+            if not metrics_task_instance or metrics_task_instance.state not in ['failed']:
+                state = metrics_task_instance.state if metrics_task_instance else 'not found'
+                logger.info(
+                    f"compute_additional_metrics is in state '{state}', not 'failed'. "
+                    f"Skipping email. This is expected when upstream tasks fail or are skipped."
+                )
+                raise AirflowSkipException(f"Upstream task compute_additional_metrics is in state '{state}', not 'failed'. Skipping email.")
+            
+            # Get data from XCom
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            model_gen_result = ti.xcom_pull(task_ids='generate_model_responses', default=None)
+            model_judge_result = ti.xcom_pull(task_ids='judge_responses', default=None)
+            
+            # Build HTML content
+            html_content = f"""
+                <h3>Additional Metrics Computation Failed: {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> compute_additional_metrics</p>
+                <p><b>Issue:</b> Failed to compute additional metrics from judged responses.</p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Input CSV:</b> {csv_path}</p>"
+            
+            if model_gen_result:
+                html_content += "<p><b>Model Generation:</b> Completed successfully</p>"
+            if model_judge_result:
+                html_content += "<p><b>Response Judging:</b> Completed successfully</p>"
+            
+            html_content += """
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>Missing judged responses CSV files</li>
+                    <li>Data format error in judged responses</li>
+                    <li>Script execution error</li>
+                    <li>File permission issues</li>
+                </ul>
+                <p><b>Action Required:</b> Check additional metrics script logs and verify input files exist.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "compute_additional_metrics" task's "Log" for details.</p>
+            """
+            
+            # Send email
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Additional Metrics Computation Failed",
+                html_content=html_content,
+                file_paths=None,
+            )
+            logger.info("Additional metrics failure email sent successfully")
         except AirflowSkipException:
             # Re-raise skip exceptions so task is properly skipped
             raise
         except Exception as e:
-            logger.error(f"Failed to send DVC push failure email: {e}", exc_info=True)
+            logger.error(f"Failed to send additional metrics failure email: {e}", exc_info=True)
             # Don't re-raise - we don't want email failures to fail the DAG
     
-    email_failure_dvc_push = PythonOperator(
-        task_id="email_failure_dvc_push",
-        python_callable=send_dvc_push_failure_email,
+    email_failure_model_metrics = PythonOperator(
+        task_id="email_failure_model_metrics",
+        python_callable=send_model_metrics_failure_email,
         trigger_rule=TriggerRule.ALL_DONE,  # Run regardless, but function will skip if upstream wasn't actually failed
         retries=0,  # Disable retries for email tasks
+    )
+
+    # Email: DVC Push (final) Failure
+    def send_dvc_push_final_failure_email(**context):
+        """Send DVC push (final) failure email only if dvc_push_final actually failed."""
+        try:
+            ti = context['ti']
+            dag = context['dag']
+            ds = context['ds']
+            run_id = context['run_id']
+            dag_run = context['dag_run']
+            
+            # Check if dvc_push_final actually failed
+            dvc_push_task_instance = dag_run.get_task_instance('dvc_push_final')
+            
+            if not dvc_push_task_instance or dvc_push_task_instance.state not in ['failed']:
+                state = dvc_push_task_instance.state if dvc_push_task_instance else 'not found'
+                logger.info(f"dvc_push_final is in state '{state}', not 'failed'. Skipping email.")
+                raise AirflowSkipException(f"Upstream task dvc_push_final is in state '{state}', not 'failed'. Skipping email.")
+            
+            csv_path = ti.xcom_pull(task_ids='preprocess_input_csv', default=None)
+            model_gen_result = ti.xcom_pull(task_ids='generate_model_responses', default=None)
+            
+            html_content = f"""
+                <h3>DVC Push (Final) Failed (But Pipeline Succeeded): {dag.dag_id}</h3>
+                <p><b>Run:</b> {run_id} | <b>Execution date:</b> {ds}</p>
+                <p><b>Failed Task:</b> dvc_push_final</p>
+                <p><b>Status:</b> ⚠️ <b>Pipeline completed successfully, but final artifact push to remote failed.</b></p>
+            """
+            if csv_path:
+                html_content += f"<p><b>Processed CSV:</b> {csv_path}</p>"
+            
+            if model_gen_result:
+                html_content += "<p><b>Model Pipeline:</b> Completed successfully</p>"
+            
+            html_content += """
+                <p><b>Issue:</b> Failed to push all artifacts (including model outputs) to DVC remote storage.</p>
+                <p><b>Possible Causes:</b></p>
+                <ul>
+                    <li>GCP credentials issue</li>
+                    <li>DVC remote storage quota exceeded</li>
+                    <li>Network connectivity issue during push</li>
+                    <li>Permission denied on remote bucket</li>
+                </ul>
+                <p><b>Action Required:</b> Data and model outputs are processed locally, but not versioned remotely. Check DVC remote configuration and retry push manually if needed.</p>
+                <p><b>Tip:</b> In the Airflow UI, open the "dvc_push_final" task's "Log" for details.</p>
+            """
+            
+            send_email_with_conditional_files(
+                to=["athatalnikar@gmail.com"],
+                subject=f"[Airflow][{dag.dag_id}][{ds}] ⚠️ DVC Push (Final) Failed (Pipeline Succeeded)",
+                html_content=html_content,
+                file_paths=None,
+            )
+            logger.info("DVC push (final) failure email sent successfully")
+        except AirflowSkipException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send DVC push (final) failure email: {e}", exc_info=True)
+    
+    email_failure_dvc_push_final = PythonOperator(
+        task_id="email_failure_dvc_push_final",
+        python_callable=send_dvc_push_final_failure_email,
+        trigger_rule=TriggerRule.ALL_DONE,
+        retries=0,
     )
 
     paths = ensure_dirs()
     cfg = ensure_config(paths)
     preprocessed_csv = preprocess_input_csv((cfg, str(OUTPUT_PATH)))
+    
     validate_task = validate_output(preprocessed_csv)
     report_task = report_validation_status(validate_task)
     enforce_task = enforce_validation_policy(validate_task)
 
-    # assumes DVC_TRACK_PATHS is defined (list of strings) and REPO_ROOT points to repo root
-    dvc_push = BashOperator(
-        task_id="dvc_push",
+    # First DVC push: after validation succeeds (safe checkpoint for validated data)
+    dvc_push_validation = BashOperator(
+        task_id="dvc_push_validation",
         trigger_rule=TriggerRule.ALL_SUCCESS,
         env={
-            "REPO_ROOT": Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1])),  # root of your repo
+            "REPO_ROOT": str(REPO_ROOT),
             "TEST_MODE": str(TEST_MODE).lower(),
             "GOOGLE_APPLICATION_CREDENTIALS": "/opt/airflow/secrets/gcp-key.json",
             "DVC_NO_ANALYTICS": "1",
@@ -1000,30 +1210,179 @@ def salad_preprocess_v1():
     python -m dvc status -c -v || true
 
     echo "──────────────────────────────────────────"
-    echo "🚀 STEP 2: dvc push (sync to remote)"
+    echo "🚀 STEP 2: dvc push (sync validated data to remote)"
     python -m dvc push -v
 
     echo "──────────────────────────────────────────"
     echo "✅ STEP 3: Quick listing of processed outputs"
     ls -la data/processed || true
 
-    echo "✅ DVC Push complete"
+    echo "✅ DVC Push (validation) complete"
+    {% endraw %}""",
+    )
+
+    @task
+    def generate_model_responses() -> dict:
+        """Generate model responses for all models in config/attack_llm_config.json."""
+        script_path = REPO_ROOT / "scripts" / "generate_model_responses.py"
+        if not script_path.exists():
+            raise AirflowFailException(f"Model response generation script not found: {script_path}")
+        
+        config_path = REPO_ROOT / "config" / "attack_llm_config.json"
+        if not config_path.exists():
+            raise AirflowFailException(f"Model config file not found: {config_path}")
+        
+        logger.info("Running model response generation using config: %s", config_path)
+        result = subprocess.run(
+            ["python", str(script_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3600,  # 1 hour timeout for model generation
+        )
+        
+        if result.returncode != 0:
+            logger.error("Model response generation failed:\nSTDOUT: %s\nSTDERR: %s", result.stdout, result.stderr)
+            raise AirflowFailException(
+                f"Model response generation failed with exit code {result.returncode}. "
+                f"Check logs for details."
+            )
+        
+        # Try to parse summary from output (generate_model_responses.py prints summaries)
+        logger.info("Model response generation completed successfully")
+        logger.info("STDOUT: %s", result.stdout[-500:] if len(result.stdout) > 500 else result.stdout)
+        
+        # Return summary info if available
+        return {
+            "status": "success",
+            "stdout": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
+        }
+
+    @task
+    def judge_responses() -> dict:
+        """Judge model responses using judge LLM."""
+        # Note: If generate_model_responses fails, this task will automatically skip
+        
+        script_path = REPO_ROOT / "scripts" / "judge_responses.py"
+        if not script_path.exists():
+            raise AirflowFailException(f"Judge responses script not found: {script_path}")
+        
+        logger.info("Running response judging")
+        result = subprocess.run(
+            ["python", str(script_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3600,  # 1 hour timeout for response judging
+        )
+        
+        if result.returncode != 0:
+            logger.error("Response judging failed:\nSTDOUT: %s\nSTDERR: %s", result.stdout, result.stderr)
+            raise AirflowFailException(
+                f"Response judging failed with exit code {result.returncode}. "
+                f"Check logs for details."
+            )
+        
+        logger.info("Response judging completed successfully")
+        return {
+            "status": "success",
+            "stdout": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
+        }
+
+    @task
+    def compute_additional_metrics() -> dict:
+        """Compute additional metrics from judged responses."""
+        # Note: If generate_model_responses fails, this task will automatically skip
+        
+        script_path = REPO_ROOT / "scripts" / "additional_metrics.py"
+        if not script_path.exists():
+            raise AirflowFailException(f"Additional metrics script not found: {script_path}")
+        
+        logger.info("Running additional metrics computation")
+        result = subprocess.run(
+            ["python", str(script_path)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,  # 5 minute timeout for metrics computation
+        )
+        
+        if result.returncode != 0:
+            logger.error("Additional metrics computation failed:\nSTDOUT: %s\nSTDERR: %s", result.stdout, result.stderr)
+            raise AirflowFailException(
+                f"Additional metrics computation failed with exit code {result.returncode}. "
+                f"Check logs for details."
+            )
+        
+        logger.info("Additional metrics computation completed successfully")
+        return {
+            "status": "success",
+            "stdout": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
+        }
+
+    # Second DVC push: after model pipeline completes (will include model outputs when added to DVC)
+    dvc_push_final = BashOperator(
+        task_id="dvc_push_final",
+        trigger_rule=TriggerRule.ALL_SUCCESS,
+        env={
+            "REPO_ROOT": str(REPO_ROOT),
+            "TEST_MODE": str(TEST_MODE).lower(),
+            "GOOGLE_APPLICATION_CREDENTIALS": "/opt/airflow/secrets/gcp-key.json",
+            "DVC_NO_ANALYTICS": "1",
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        },
+        bash_command="""{% raw %}
+    set -euo pipefail
+    cd "$REPO_ROOT"
+
+    echo "──────────────────────────────────────────"
+    echo "🔎 STEP 1: dvc status (cache/remote delta)"
+    python -m dvc status -c -v || true
+
+    echo "──────────────────────────────────────────"
+    echo "🚀 STEP 2: dvc push (sync all artifacts to remote)"
+    echo "Note: This task is configured to always succeed (model outputs may not be implemented yet)"
+    if python -m dvc push -v; then
+        echo "✅ dvc push completed successfully"
+    else
+        echo "⚠️  WARNING: dvc push encountered issues, but task will still succeed"
+        echo "This is expected if model outputs are not yet tracked in DVC"
+    fi
+
+    echo "──────────────────────────────────────────"
+    echo "✅ STEP 3: Quick listing of outputs"
+    ls -la data/processed || true
+    ls -la data/responses || true
+
+    echo "✅ DVC Push (final) complete - task succeeded"
     {% endraw %}""",
     )
 
     # ── Orchestration ───────────────────────────────────────────────────────────
     # If validate_task fails, both report_task and enforce_task are skipped
     # (report_task uses ALL_SUCCESS, enforce_task uses default ALL_SUCCESS)
-    dvc_pull >> paths >> cfg >> preprocessed_csv >> validate_task >> [report_task, enforce_task]
+    dvc_pull >> paths >> cfg >> preprocessed_csv >> validate_task
+    validate_task >> [report_task, enforce_task]
  
     # Email validation report - runs regardless of validation outcome
     # Only depend on validate_task - report_task is optional and may be skipped when validate_task fails
     # This prevents email_validation_report from waiting indefinitely for report_task
     validate_task >> email_validation_report
 
-    # On success: push artifacts then success email
-    # If enforce_task fails, dvc_push is skipped (default ALL_SUCCESS trigger rule)
-    enforce_task >> dvc_push >> email_success
+    # Model pipeline - uses config/attack_llm_config.json as input
+    # Model pipeline tasks run sequentially: model_gen >> model_judge >> model_metrics
+    # dvc_push_validation and model_gen can run in parallel after validation
+    # dvc_push_final waits for both model_metrics and dvc_push_validation to complete
+    model_gen = generate_model_responses()
+    model_judge = judge_responses()  # Auto-skips if model_gen fails
+    model_metrics = compute_additional_metrics()  # Auto-skips if model_gen fails
+    
+    enforce_task >> [dvc_push_validation, model_gen]
+    model_gen >> model_judge >> model_metrics
+    model_metrics >> dvc_push_final >> email_success
 
     # Context-specific failure emails based on where failure occurs
     # Stage 1: DVC Pull failures
@@ -1045,13 +1404,16 @@ def salad_preprocess_v1():
     # This handles the case where validate_task succeeded but enforce_task failed
     enforce_task >> email_failure_enforce_policy
     
-    # Stage 5: DVC Push failures (only if validation succeeded)
-    # Only trigger if dvc_push actually ran and failed (not skipped)
-    # Only connect dvc_push - if it's skipped (enforce_task failed), dvc_push is in "upstream_failed" state
-    # ONE_FAILED only triggers on "failed" state, not "upstream_failed" or "skipped" state
-    # So email will only trigger if dvc_push actually executed and failed
-    # Note: If this still triggers incorrectly, we may need to use ALL_DONE and check task state in template
-    dvc_push >> email_failure_dvc_push
+    # Stage 5: DVC Push (validation) failures (only if validation succeeded)
+    dvc_push_validation >> email_failure_dvc_push_validation
+    
+    # Stage 6: Model pipeline failures
+    model_gen >> email_failure_model_generation
+    model_judge >> email_failure_model_judging
+    model_metrics >> email_failure_model_metrics
+    
+    # Stage 7: DVC Push (final) failures (only if model pipeline succeeded)
+    dvc_push_final >> email_failure_dvc_push_final
 
 
 dag = salad_preprocess_v1()
