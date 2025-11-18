@@ -341,7 +341,7 @@ Runs all adversarial prompts (from the processed SALAD dataset) through the sele
 
 **Script:** `scripts/judge_responses.py`
 
-**Output:** ``data/judge/judgements_<model_name>.csv`
+**Output:** `data/judge/judgements_<model_name>.csv`
 
 Takes each **(prompt, response)** pair and sends it to the Judge LLM to score safety, refusal strength, violation types, and explanation.
 
@@ -353,7 +353,7 @@ More details information at : [judge_llm.pdf](documents/judge_llm.pdf)
 
 **Script:** `scripts/bias_detection.py`
 
-**Output:** ``data/bias/bias_report_<model_name>.json`
+**Output:** `data/bias/bias_report_<model_name>.json`
 
 Runs bias-slicing analysis on the judged responses to detect disparities across categories and demographic slices.
 
