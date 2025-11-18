@@ -1,19 +1,31 @@
+# ============================================================================
 # Python
+# ============================================================================
 __pycache__/
 *.py[cod]
 *.egg-info/
 *.egg
 *.log
 
-# Virtual envs
+# ============================================================================
+# Virtual Environments
+# ============================================================================
 venv/
 .venv/
+env/
+ENV/
 
-# Local env files
+# ============================================================================
+# Environment Variables & Secrets
+# ============================================================================
 .env
 .env.*
+.secrets/
+gcp-key.json
 
-# Airflow runtime (metadata, logs, webserver config)
+# ============================================================================
+# Airflow Runtime
+# ============================================================================
 .airflow/
 airflow_home/
 airflow.db*
@@ -24,40 +36,52 @@ airflow_logs/
 dags/__pycache__/
 scripts/__pycache__/
 
-# Optional: central runtime artifacts folder (see below)
-airflow_artifacts/
-
-# Data outputs
-data/tmp/
-!data/.gitkeep
-!data/**/.gitkeep
-data/validation_reports/
+# ============================================================================
+# Data Directories (DVC-tracked)
+# ============================================================================
+# DVC-managed data outputs - tracked via dvc.yaml
+# These directories are versioned in DVC remote storage, not in git
+data/processed/*
+!data/processed/*.dvc
 data/responses/
 data/judge/
+data/bias/
+data/metrics/
+data/validation_reports/
 
-# Editors/OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+# Temporary and intermediate data
+data/tmp/
 
-# DVC-managed artifacts and caches
-/data/processed/*
-!/data/processed/*.dvc
+# Keep .gitkeep files for empty directories
+!data/.gitkeep
+!data/**/.gitkeep
 
-# Local secrets
-.secrets/
-
-# Keep config JSONs tracked
+# ============================================================================
+# Configuration Files
+# ============================================================================
+# Keep config JSONs tracked in git
 !config/*.json
 
-# (Optional) still ignore random JSONs at repo root only
+# Ignore random JSONs at repo root only
 /*.json
 
-gcp-key.json
+# ============================================================================
+# Editors & IDEs
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-data/metrics/stats
-data/metrics/validation
-# Python cache and compiled files
-__pycache__/
-*.py[cod]
+# ============================================================================
+# Operating System Files
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini

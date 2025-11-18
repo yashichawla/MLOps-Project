@@ -1557,11 +1557,16 @@ def salad_ml_evaluation_pipeline_v1():
     python -m dvc status -c -v || true
 
     echo "──────────────────────────────────────────"
-    echo "🚀 STEP 2: dvc push (sync validated data to remote)"
+    echo "📝 STEP 2: Commit preprocessing outputs to DVC (if any)"
+    echo "This ensures newly generated preprocessing outputs are tracked before pushing"
+    python -m dvc commit -f salad_preprocess || true
+
+    echo "──────────────────────────────────────────"
+    echo "🚀 STEP 3: dvc push (sync validated data to remote)"
     python -m dvc push -v
 
     echo "──────────────────────────────────────────"
-    echo "✅ STEP 3: Quick listing of processed outputs"
+    echo "✅ STEP 4: Quick listing of processed outputs"
     ls -la data/processed || true
 
     echo "✅ DVC Push (validation) complete"
@@ -1702,7 +1707,7 @@ def salad_ml_evaluation_pipeline_v1():
             "stdout": result.stdout[-500:] if len(result.stdout) > 500 else result.stdout,
         }
 
-    # Second DVC push: after model pipeline completes (will include model outputs when added to DVC)
+    # Second DVC push: after model pipeline completes (includes all model outputs: responses, judge, bias, metrics)
     dvc_push_final = BashOperator(
         task_id="dvc_push_final",
         trigger_rule=TriggerRule.ALL_SUCCESS,
@@ -1722,21 +1727,35 @@ def salad_ml_evaluation_pipeline_v1():
     python -m dvc status -c -v || true
 
     echo "──────────────────────────────────────────"
-    echo "🚀 STEP 2: dvc push (sync all artifacts to remote)"
-    echo "Note: This task is configured to always succeed (model outputs may not be implemented yet)"
+    echo "📝 STEP 2: Commit new outputs to DVC (if any)"
+    echo "This ensures newly generated model outputs are tracked before pushing"
+    # Commit all stages to update lock file with any new outputs
+    python -m dvc commit -f || true
+
+    echo "──────────────────────────────────────────"
+    echo "🚀 STEP 3: dvc push (sync all artifacts to remote)"
+    echo "Pushing all stages including: salad_preprocess, model_responses, judge_outputs, bias_detection, additional_metrics"
     if python -m dvc push -v; then
         echo "✅ dvc push completed successfully"
     else
         echo "⚠️  WARNING: dvc push encountered issues, but task will still succeed"
-        echo "This is expected if model outputs are not yet tracked in DVC"
+        echo "This is expected if some outputs are not yet tracked in DVC"
     fi
 
     echo "──────────────────────────────────────────"
-    echo "✅ STEP 3: Quick listing of outputs"
+    echo "✅ STEP 4: Quick listing of all output directories"
+    echo "Processed data:"
     ls -la data/processed || true
+    echo "Model responses:"
     ls -la data/responses || true
+    echo "Judge outputs:"
+    ls -la data/judge || true
+    echo "Bias detection:"
+    ls -la data/bias || true
+    echo "Metrics:"
+    ls -la data/metrics || true
 
-    echo "✅ DVC Push (final) complete - task succeeded"
+    echo "✅ DVC Push (final) complete - all model pipeline outputs pushed to remote"
     {% endraw %}""",
     )
 
