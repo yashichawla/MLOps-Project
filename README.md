@@ -180,11 +180,11 @@ Note: model_metrics (additional_metrics.py) and bias_detection (bias_detection.p
 
 The DAG now uses the unified validator's XCom output for all emails:
 
-| Trigger    | Email                            | Contents                                                                                          | Trigger Rule                                     | Operator Type                  |
-| ---------- | -------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------ |
-| Always     | **Validation Report**            | JSON report + anomalies attached                                                                  | ALL_DONE (runs regardless of task status)        | PythonOperator                 |
+| Trigger    | Email                            | Contents                                                                                                                                                                     | Trigger Rule                                     | Operator Type                  |
+| ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------ |
+| Always     | **Validation Report**            | JSON report + anomalies attached                                                                                                                                             | ALL_DONE (runs regardless of task status)        | PythonOperator                 |
 | On Success | **✅ DAG Succeeded**             | Comprehensive summary: validation metrics, model metrics table (coverage, over-refusal), bias detection summary (ASR, biased slices), validation report paths, soft warnings | ALL_SUCCESS (only if all upstream tasks succeed) | PythonOperator                 |
-| On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.) | ALL_DONE or ONE_FAILED                           | EmailOperator / PythonOperator |
+| On Failure | **❌ Context-Specific Failures** | Stage-specific failure details (DVC pull, setup, preprocessing, validation, model pipeline, etc.)                                                                            | ALL_DONE or ONE_FAILED                           | EmailOperator / PythonOperator |
 
 ---
 
@@ -204,6 +204,7 @@ The DAG now uses the unified validator's XCom output for all emails:
 ### 4.3. Success Email Contents:
 
 The success email (`email_success`) includes:
+
 - **Execution metadata**: Run ID, execution date, timestamp, CSV path
 - **Data validation metrics**: Row count, null prompts, duplicates, unknown rate, text length range
 - **Soft warnings**: Any soft warnings from validation
@@ -315,16 +316,14 @@ pytest MLOps-Project/tests/test_preprocess_salad.py -q
 
 Artifacts: GE validation tests write JSON to `data/metrics/stats/<date>/stats.json` and `data/metrics/validation/<date>/anomalies.json`.
 
-Here is the **short, clean Section 11** exactly in the style of the rest of your README.
-
-No commands, no API setup, no extras — just what was done + placeholders.
-
 ---
 
 ## 10. Model Pipeline (As part of model pipeline submission)
 
 We now have **four additional scripts** that complete the model-processing workflow end-to-end. Alongwith DVC and DAG changes.
 Below is a short summary of each, with placeholder names and corresponding output files.
+
+---
 
 ### 10.1 Run Adversarial Prompts Through Model
 
