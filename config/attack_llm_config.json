@@ -1,0 +1,74 @@
+{
+  "models": [
+    {
+      "name": "llama-3-8b",
+      "model_id": "meta-llama/Meta-Llama-3-8B-Instruct",
+      "provider": "novita",
+      "max_new_tokens": 256,
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "seed": 42,
+      "system_prompt": "",
+      "sample": true,
+      "n_samples": 5,
+      "csv_path": "data/processed/processed_data.csv",
+      "out_path": "data/responses/model_responses_llama3_8b.csv"
+    },
+    {
+      "name": "llama-3-70b",
+      "model_id": "meta-llama/Meta-Llama-3-70B-Instruct",
+      "provider": "novita",
+      "max_new_tokens": 256,
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "seed": 42,
+      "system_prompt": "",
+      "sample": true,
+      "n_samples": 5,
+      "csv_path": "data/processed/processed_data.csv",
+      "out_path": "data/responses/model_responses_llama3_70b.csv"
+    },
+    {
+      "name": "llama-3.1-8b",
+      "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+      "provider": "novita",
+      "max_new_tokens": 256,
+      "temperature": 0.25,
+      "top_p": 0.9,
+      "seed": 42,
+      "system_prompt": "",
+      "sample": true,
+      "n_samples": 5,
+      "csv_path": "data/processed/processed_data.csv",
+      "out_path": "data/responses/model_responses_llama3.1_8b.csv"
+    },
+    {
+      "name": "moonshot-instruct",
+      "model_id": "moonshotai/Kimi-K2-Instruct-0905",
+      "provider": "novita",
+      "max_new_tokens": 256,
+      "temperature": 0.3,
+      "top_p": 0.9,
+      "seed": 42,
+      "system_prompt": "",
+      "sample": true,
+      "n_samples": 5,
+      "csv_path": "data/processed/processed_data.csv",
+      "out_path": "data/responses/model_responses_moonshot_instruct.csv"
+    },
+    {
+      "name": "minimax",
+      "model_id": "MiniMaxAI/MiniMax-M2",
+      "provider": "novita",
+      "max_new_tokens": 256,
+      "temperature": 0.25,
+      "top_p": 0.9,
+      "seed": 42,
+      "system_prompt": "",
+      "sample": true,
+      "n_samples": 5,
+      "csv_path": "data/processed/processed_data.csv",
+      "out_path": "data/responses/model_responses_minimax.csv"
+    }
+  ]
+}
