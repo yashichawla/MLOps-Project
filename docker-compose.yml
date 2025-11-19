@@ -65,6 +65,7 @@ services:
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
       _PIP_ADDITIONAL_REQUIREMENTS: "datasets pandas pyarrow dvc[gs] gcsfs google-cloud-storage"
       GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
+      GROQ_API_KEY: ${GROQ_API_KEY}
       # --- SMTP (Gmail) for EmailOperator ---
       AIRFLOW__EMAIL__EMAIL_BACKEND: airflow.utils.email.send_email_smtp
       AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
@@ -108,6 +109,7 @@ services:
       SALAD_OUTPUT_PATH: /opt/airflow/app/data/processed/processed_data.csv
       _PIP_ADDITIONAL_REQUIREMENTS: "datasets pandas pyarrow dvc[gs] gcsfs google-cloud-storage"
       GOOGLE_APPLICATION_CREDENTIALS: /opt/airflow/secrets/gcp-key.json
+      GROQ_API_KEY: ${GROQ_API_KEY}
       # --- SMTP for task/EmailOperator ---
       AIRFLOW__EMAIL__EMAIL_BACKEND: airflow.utils.email.send_email_smtp
       AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com

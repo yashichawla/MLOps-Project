@@ -2,9 +2,9 @@
 numpy==1.26.4
 pandas==2.1.4
 datasets>=2.16.1
-fsspec==2023.10.0
 pyarrow>=16.0.0
 tqdm>=4.66.0
+cffi>=1.9,<2.0.0  # Constraint for snowflake-connector-python compatibility
 
 #dvc
 # dvc[gcs]>=3.0.0
@@ -13,3 +13,10 @@ dvc[gs]>=3.0.0
 # tests are not needed inside the runtime image, omit pytest here
 # Data validation - compulsory, pinned to working version
 great_expectations==0.18.21  # Pin to v0.18.21 for PandasDataset API compatibility
+
+# Environment and API clients
+python-dotenv==1.0.0
+huggingface-hub==0.30.2
+groq==0.34.1
+
+setuptools>=66.0.0,<67.0.0
