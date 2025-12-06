@@ -1,0 +1,47 @@
+steps:
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/metrics-api:latest'
+      - './deploy'
+
+  # Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/metrics-api:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'metrics-api'
+      - '--image=gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=GCS_BUCKET=mlops-project-dvc,GCP_PROJECT_ID=break-the-bot'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--max-instances=10'
+      - '--timeout=300'
+
+images:
+  - 'gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/metrics-api:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+
