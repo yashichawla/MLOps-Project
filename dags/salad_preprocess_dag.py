@@ -783,7 +783,7 @@ def salad_ml_evaluation_pipeline_v1():
             logger.info(f"Subject: [Airflow][{dag.dag_id}][{ds}] ✅ DAG Succeeded")
             
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ✅ DAG Succeeded",
                 html_content=html_content,
                 file_paths=None,
@@ -812,7 +812,7 @@ def salad_ml_evaluation_pipeline_v1():
     # Email 1: DVC Pull Failure (Infrastructure/Data Source Issue)
     email_failure_dvc_pull = EmailOperator(
         task_id="email_failure_dvc_pull",
-        to=["athatalnikar@gmail.com"],
+        to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ DVC Pull Failed",
         html_content="""
             <h3>DVC Pull Failed: {{ dag.dag_id }}</h3>
@@ -841,7 +841,7 @@ def salad_ml_evaluation_pipeline_v1():
     # Email 2: Setup/Config Failure (Configuration Issue)
     email_failure_setup = EmailOperator(
         task_id="email_failure_setup",
-        to=["athatalnikar@gmail.com"],
+        to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Setup/Config Failed",
         html_content="""
             <h3>Setup/Config Failed: {{ dag.dag_id }}</h3>
@@ -875,7 +875,7 @@ def salad_ml_evaluation_pipeline_v1():
     # Email 3: Preprocessing Failure (Data Processing Issue)
     email_failure_preprocessing = EmailOperator(
         task_id="email_failure_preprocessing",
-        to=["athatalnikar@gmail.com"],
+        to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
         subject="[Airflow][{{ dag.dag_id }}][{{ ds }}] ❌ Preprocessing Failed",
         html_content="""
             <h3>Preprocessing Failed: {{ dag.dag_id }}</h3>
@@ -1012,7 +1012,7 @@ def salad_ml_evaluation_pipeline_v1():
             
             # Send email with conditional files
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Validation Failed",
                 html_content=html_content,
                 file_paths=file_paths,
@@ -1129,7 +1129,7 @@ def salad_ml_evaluation_pipeline_v1():
             
             # Send email with conditional files
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Validation Policy Enforcement Failed",
                 html_content=html_content,
                 file_paths=file_paths,
@@ -1201,7 +1201,7 @@ def salad_ml_evaluation_pipeline_v1():
             """
             
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ DVC Push (Validation) Failed",
                 html_content=html_content,
                 file_paths=None,
@@ -1268,7 +1268,7 @@ def salad_ml_evaluation_pipeline_v1():
             
             # Send email
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Model Generation Failed",
                 html_content=html_content,
                 file_paths=None,
@@ -1341,7 +1341,7 @@ def salad_ml_evaluation_pipeline_v1():
             
             # Send email
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Model Judging Failed",
                 html_content=html_content,
                 file_paths=None,
@@ -1417,7 +1417,7 @@ def salad_ml_evaluation_pipeline_v1():
             
             # Send email
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Additional Metrics Computation Failed",
                 html_content=html_content,
                 file_paths=None,
@@ -1494,7 +1494,7 @@ def salad_ml_evaluation_pipeline_v1():
             
             # Send email
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ❌ Bias Detection Failed",
                 html_content=html_content,
                 file_paths=None,
@@ -1561,7 +1561,7 @@ def salad_ml_evaluation_pipeline_v1():
             """
             
             send_email_with_conditional_files(
-                to=["athatalnikar@gmail.com"],
+                to=["athatalnikar@gmail.com", "yashi.chawla1@gmail.com"],
                 subject=f"[Airflow][{dag.dag_id}][{ds}] ⚠️ DVC Push (Final) Failed (Pipeline Succeeded)",
                 html_content=html_content,
                 file_paths=None,
