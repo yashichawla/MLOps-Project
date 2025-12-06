@@ -71,7 +71,7 @@ class BiasedSlices(BaseModel):
 class BiasReportResponse(BaseModel):
     """Response model for bias report endpoint."""
     model: Optional[str] = None
-    global: GlobalBiasMetrics = Field(..., alias="global")
+    global_metrics: GlobalBiasMetrics = Field(..., alias="global")
     thresholds: BiasThresholds
     by_category: List[CategorySlice]
     by_size_label: List[SizeSlice]

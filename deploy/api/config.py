@@ -1,5 +1,6 @@
 """Configuration management for the Metrics API service."""
 import os
+from pathlib import Path
 from typing import List
 
 
@@ -16,6 +17,9 @@ class Config:
     
     # CORS Configuration
     CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", "*").split(",")
+    
+    # Local Development - Path to project root for local file fallback
+    LOCAL_DATA_ROOT: str = os.getenv("LOCAL_DATA_ROOT", "")
     
     # GCS Paths
     METRICS_PATH_PREFIX: str = "data/metrics"

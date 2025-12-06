@@ -1,0 +1,2 @@
+"""Dashboard components module."""
+

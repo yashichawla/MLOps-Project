@@ -60,6 +60,6 @@ stages:
     outs:
     - path: data/metrics
       hash: md5
-      md5: 1779849890251f762b8ecc1637bec8ea.dir
-      size: 7858
-      nfiles: 13
+      md5: 916bf93259883667e6b633faf1746fe9.dir
+      size: 7292
+      nfiles: 12

@@ -542,3 +542,66 @@ For detailed API documentation, see [deploy/README.md](./deploy/README.md).
 
 ---
 
+## 12. Dashboard - Streamlit Web Interface
+
+The Streamlit Dashboard provides an interactive web interface to visualize evaluation metrics from the Metrics API service.
+
+### 12.1 Prerequisites
+
+- Python 3.11+
+- Metrics API service running (local or Cloud Run)
+
+### 12.2 Installation
+
+1. Install dashboard dependencies:
+```bash
+cd deploy/dashboard
+pip install -r requirements-dashboard.txt
+```
+
+2. Set API URL (optional):
+```bash
+export METRICS_API_URL=https://your-cloud-run-url
+```
+
+### 12.3 Running the Dashboard
+
+**Local Execution:**
+```bash
+# From repository root
+streamlit run deploy/dashboard/app.py
+```
+
+The dashboard will be available at `http://localhost:8501`
+
+### 12.4 Dashboard Features
+
+- **Model Overview**: Compare all evaluated models
+- **Model Details**: Deep dive into individual model metrics
+- **Bias Detection**: Visualize bias with highlighted categories
+- **Coverage Metrics**: View prompt distribution
+- **Interactive Charts**: Plotly-powered visualizations
+- **Auto-refresh**: Optional automatic data refresh
+
+### 12.5 Configuration
+
+Set environment variables:
+- `METRICS_API_URL`: API service URL (default: `http://localhost:8080`)
+- `AUTO_REFRESH_INTERVAL`: Refresh interval in seconds (default: 30)
+- `CACHE_TTL`: Cache duration in seconds (default: 300)
+
+### 12.6 Dashboard Pages
+
+1. **Overview Page**: Model comparison and summary table
+2. **Model Detail Page**: 
+   - Summary metrics
+   - Bias detection analysis
+   - Coverage visualization
+   - Full metrics data
+
+### 12.7 Documentation
+
+For detailed dashboard documentation, see [deploy/dashboard/README.md](./deploy/dashboard/README.md).
+
+---
+
