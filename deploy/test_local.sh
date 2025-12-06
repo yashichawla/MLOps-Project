@@ -15,8 +15,8 @@ echo "✅ GCP credentials found"
 
 # Set environment variables
 export GOOGLE_APPLICATION_CREDENTIALS="../.secrets/gcp-key.json"
-export GCS_BUCKET="mlops-project-dvc"
-export GCP_PROJECT_ID="break-the-bot"
+export GCS_BUCKET="mlops-project-dvc-480422"
+export GCP_PROJECT_ID="break-the-bot-480422"
 export PORT="8080"
 
 echo "✅ Environment variables set"

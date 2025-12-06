@@ -1,7 +1,6 @@
 """GCS client for reading metrics files from Google Cloud Storage."""
 import json
 import logging
-from pathlib import Path
 from typing import Dict, List, Optional
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
@@ -14,20 +13,18 @@ logger = logging.getLogger(__name__)
 class GCSClient:
     """Client for reading files from GCS bucket with local file fallback."""
     
-    def __init__(self, bucket_name: Optional[str] = None, local_data_root: Optional[str] = None):
+    def __init__(self, bucket_name: Optional[str] = None):
         """Initialize GCS client.
         
         Args:
             bucket_name: GCS bucket name. If None, uses config.GCS_BUCKET.
-            local_data_root: Path to project root for local file fallback. If None, uses config.LOCAL_DATA_ROOT.
         """
         self.bucket_name = bucket_name or config.GCS_BUCKET
-        self.local_data_root = Path(local_data_root) if local_data_root else (Path(config.LOCAL_DATA_ROOT) if config.LOCAL_DATA_ROOT else None)
         self.client = storage.Client(project=config.GCP_PROJECT_ID)
         self.bucket = self.client.bucket(self.bucket_name)
     
     def read_json(self, blob_path: str) -> Optional[Dict]:
-        """Read JSON file from GCS or local filesystem (fallback).
+        """Read JSON file from GCS.
         
         Args:
             blob_path: Path to the blob in GCS (e.g., 'data/metrics/file.json').
@@ -35,22 +32,6 @@ class GCSClient:
         Returns:
             Parsed JSON as dictionary, or None if file not found or error.
         """
-        # Try local file first if local_data_root is configured
-        if self.local_data_root:
-            local_path = self.local_data_root / blob_path
-            if local_path.exists():
-                try:
-                    logger.info(f"Reading from local file: {local_path}")
-                    with open(local_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON from {local_path}: {e}")
-                    return None
-                except Exception as e:
-                    logger.error(f"Error reading local file {local_path}: {e}")
-                    # Fall through to try GCS
-        
-        # Try GCS
         try:
             blob = self.bucket.blob(blob_path)
             if not blob.exists():
@@ -70,7 +51,7 @@ class GCSClient:
             return None
     
     def list_blobs(self, prefix: str) -> List[str]:
-        """List all blobs with given prefix (from local filesystem or GCS).
+        """List all blobs with given prefix from GCS.
         
         Args:
             prefix: Prefix to filter blobs (e.g., 'data/metrics/').
@@ -78,25 +59,6 @@ class GCSClient:
         Returns:
             List of blob paths.
         """
-        # Try local filesystem first if local_data_root is configured
-        if self.local_data_root:
-            local_prefix = self.local_data_root / prefix
-            if local_prefix.exists():
-                try:
-                    files = []
-                    for file_path in local_prefix.rglob('*'):
-                        if file_path.is_file():
-                            # Get relative path from local_data_root
-                            rel_path = file_path.relative_to(self.local_data_root)
-                            files.append(str(rel_path).replace('\\', '/'))
-                    if files:
-                        logger.info(f"Found {len(files)} local files with prefix {prefix}")
-                        return files
-                except Exception as e:
-                    logger.warning(f"Error listing local files with prefix {prefix}: {e}")
-                    # Fall through to try GCS
-        
-        # Try GCS
         try:
             blobs = self.client.list_blobs(self.bucket_name, prefix=prefix)
             return [blob.name for blob in blobs]
@@ -130,7 +92,7 @@ class GCSClient:
             return None
     
     def blob_exists(self, blob_path: str) -> bool:
-        """Check if blob exists in GCS or local filesystem.
+        """Check if blob exists in GCS.
         
         Args:
             blob_path: Path to the blob in GCS.
@@ -138,13 +100,6 @@ class GCSClient:
         Returns:
             True if blob exists, False otherwise.
         """
-        # Try local file first if local_data_root is configured
-        if self.local_data_root:
-            local_path = self.local_data_root / blob_path
-            if local_path.exists():
-                return True
-        
-        # Try GCS
         try:
             blob = self.bucket.blob(blob_path)
             return blob.exists()

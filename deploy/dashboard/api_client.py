@@ -6,6 +6,8 @@ from datetime import datetime
 
 from config import config
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -32,20 +34,26 @@ class MetricsAPIClient:
         """
         url = f"{self.base_url}{endpoint}"
         try:
+            logger.debug(f"Making request to {url}")
             response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
-            return response.json()
-        except requests.exceptions.ConnectionError:
-            logger.error(f"Failed to connect to API at {url}")
+            data = response.json()
+            logger.debug(f"Successfully received response from {url}")
+            return data
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Failed to connect to API at {url}: {e}")
             return None
         except requests.exceptions.Timeout:
-            logger.error(f"Request to {url} timed out")
+            logger.error(f"Request to {url} timed out after {self.timeout}s")
             return None
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error for {url}: {e}")
+            logger.error(f"HTTP error for {url}: {e} - Status: {e.response.status_code if hasattr(e, 'response') else 'Unknown'}")
+            return None
+        except ValueError as e:
+            logger.error(f"Failed to parse JSON response from {url}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error for {url}: {e}")
+            logger.error(f"Unexpected error for {url}: {type(e).__name__}: {e}")
             return None
     
     def get_health(self) -> Optional[Dict]:

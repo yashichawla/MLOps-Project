@@ -13,10 +13,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Set environment variables
 export GOOGLE_APPLICATION_CREDENTIALS="$PROJECT_ROOT/.secrets/gcp-key.json"
-export GCS_BUCKET="mlops-project-dvc"
-export GCP_PROJECT_ID="break-the-bot"
+export GCS_BUCKET="mlops-project-dvc-480422"
+export GCP_PROJECT_ID="break-the-bot-480422"
 export PORT="8080"
-export LOCAL_DATA_ROOT="$PROJECT_ROOT"  # Enable local file fallback for development
 
 echo "Environment:"
 echo "  GCS_BUCKET: $GCS_BUCKET"

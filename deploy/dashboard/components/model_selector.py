@@ -19,8 +19,14 @@ def render_model_selector(api_client, auto_refresh: bool = False) -> Optional[st
     # Fetch available models
     models_response = api_client.list_models()
     
-    if not models_response or "models" not in models_response:
+    if not models_response:
         st.sidebar.error("Failed to load models. Check API connection.")
+        st.sidebar.caption(f"API URL: {api_client.base_url}")
+        return None
+    
+    if "models" not in models_response:
+        st.sidebar.error("Invalid response from API. Expected 'models' key.")
+        st.sidebar.caption(f"Response keys: {list(models_response.keys()) if isinstance(models_response, dict) else 'Not a dict'}")
         return None
     
     models = models_response["models"]

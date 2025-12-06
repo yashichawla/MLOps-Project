@@ -83,10 +83,14 @@ def render_sidebar():
     if health:
         if health.get("status") == "healthy":
             st.sidebar.success("✅ API Connected")
+            st.sidebar.caption(f"API: {st.session_state.api_client.base_url}")
         else:
             st.sidebar.warning("⚠️ API Degraded")
+            st.sidebar.caption(f"API: {st.session_state.api_client.base_url}")
     else:
         st.sidebar.error("❌ API Not Connected")
+        st.sidebar.caption(f"API URL: {st.session_state.api_client.base_url}")
+        st.sidebar.caption("Check if API is running on port 8080")
     
     st.sidebar.divider()
     

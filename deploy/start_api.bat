@@ -5,8 +5,8 @@ echo ==========================================
 
 REM Set environment variables
 set GOOGLE_APPLICATION_CREDENTIALS=..\.secrets\gcp-key.json
-set GCS_BUCKET=mlops-project-dvc
-set GCP_PROJECT_ID=break-the-bot
+set GCS_BUCKET=mlops-project-dvc-480422
+set GCP_PROJECT_ID=break-the-bot-480422
 set PORT=8080
 
 echo Environment variables set:

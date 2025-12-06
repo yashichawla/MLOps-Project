@@ -8,8 +8,8 @@ class Config:
     """Application configuration loaded from environment variables."""
     
     # GCS Configuration
-    GCS_BUCKET: str = os.getenv("GCS_BUCKET", "mlops-project-dvc")
-    GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "break-the-bot")
+    GCS_BUCKET: str = os.getenv("GCS_BUCKET", "mlops-project-dvc-480422")
+    GCP_PROJECT_ID: str = os.getenv("GCP_PROJECT_ID", "break-the-bot-480422")
     
     # Server Configuration
     PORT: int = int(os.getenv("PORT", "8080"))
@@ -17,9 +17,6 @@ class Config:
     
     # CORS Configuration
     CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", "*").split(",")
-    
-    # Local Development - Path to project root for local file fallback
-    LOCAL_DATA_ROOT: str = os.getenv("LOCAL_DATA_ROOT", "")
     
     # GCS Paths
     METRICS_PATH_PREFIX: str = "data/metrics"
