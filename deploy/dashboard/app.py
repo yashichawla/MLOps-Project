@@ -103,7 +103,7 @@ def render_sidebar():
     st.session_state.auto_refresh = auto_refresh
     
     # Refresh button
-    if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+    if st.sidebar.button("🔄 Refresh Data", width='stretch'):
         st.cache_data.clear()
         st.session_state.last_refresh = datetime.now()
         st.rerun()
@@ -155,7 +155,7 @@ def render_overview_page(api_client: MetricsAPIClient):
         })
     
     df = pd.DataFrame(table_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
 
 
 def render_model_detail_page(api_client: MetricsAPIClient, model_name: str):

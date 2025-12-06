@@ -57,7 +57,7 @@ def render_asr_by_category_chart(bias_data: Dict) -> None:
         showlegend=False
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Add legend
     st.caption("🔴 Red bars indicate biased categories")
@@ -97,7 +97,7 @@ def render_coverage_pie_chart(coverage_data: Dict) -> None:
         showlegend=True
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_model_comparison_chart(all_models_data: Dict) -> None:
@@ -150,5 +150,5 @@ def render_model_comparison_chart(all_models_data: Dict) -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 

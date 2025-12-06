@@ -35,7 +35,7 @@ def render_coverage_metrics(coverage_data: Dict) -> None:
             for cat, count in prompts_per_category.items()
         ])
         df_category = df_category.sort_values("Count", ascending=False)
-        st.dataframe(df_category, use_container_width=True, hide_index=True)
+        st.dataframe(df_category, width='stretch', hide_index=True)
     
     # Prompts per size label
     prompts_per_size = coverage_data.get("prompts_per_size")
@@ -46,5 +46,5 @@ def render_coverage_metrics(coverage_data: Dict) -> None:
                 for size, count in prompts_per_size.items()
             ])
             df_size = df_size.sort_values("Count", ascending=False)
-            st.dataframe(df_size, use_container_width=True, hide_index=True)
+            st.dataframe(df_size, width='stretch', hide_index=True)
 

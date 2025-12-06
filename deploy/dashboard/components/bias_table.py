@@ -40,7 +40,7 @@ def render_bias_table(bias_data: Dict) -> None:
     
     st.dataframe(
         df.style.apply(highlight_biased, axis=1),
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
     
