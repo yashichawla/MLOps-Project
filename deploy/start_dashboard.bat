@@ -3,8 +3,8 @@ echo ==========================================
 echo Starting Streamlit Dashboard
 echo ==========================================
 
-REM Set API URL (default to localhost)
-set METRICS_API_URL=http://localhost:8080
+REM Set API URL (defaults to deployed Cloud Run service)
+set METRICS_API_URL=https://metrics-api-hel7hrgq5q-uc.a.run.app
 
 echo API URL: %METRICS_API_URL%
 echo.

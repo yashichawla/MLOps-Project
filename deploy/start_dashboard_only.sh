@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start Dashboard only (assumes API is already running)
+# Start Dashboard only (connects to deployed Cloud Run API by default)
 
 set -e
 
@@ -10,16 +10,16 @@ echo "=========================================="
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Set API URL
-export METRICS_API_URL="${METRICS_API_URL:-http://localhost:8080}"
+# Set API URL (defaults to deployed Cloud Run service)
+export METRICS_API_URL="${METRICS_API_URL:-https://metrics-api-hel7hrgq5q-uc.a.run.app}"
 
 echo "API URL: $METRICS_API_URL"
 echo ""
 
-# Check if API is running
+# Check if API is accessible
 if ! curl -s "$METRICS_API_URL/health" > /dev/null 2>&1; then
-    echo "⚠️  Warning: API does not appear to be running at $METRICS_API_URL"
-    echo "   Start the API first with: ./start_api_only.sh"
+    echo "⚠️  Warning: API does not appear to be accessible at $METRICS_API_URL"
+    echo "   This may be a network issue or the service may be down."
     echo ""
     read -p "Continue anyway? (y/n) " -n 1 -r
     echo
