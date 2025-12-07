@@ -85,3 +85,18 @@ data/tmp/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# ============================================================================
+# Testing Files (Local Only)
+# ============================================================================
+# Test scripts and documentation - keep local only
+tests/
+testing_guide.md
+deploy/TESTING_GUIDE.md
+# Test scripts (shell and batch)
+deploy/test_*.sh
+deploy/test_*.bat
+**/test_*.sh
+**/test_*.bat
+pytest.ini
+tests/requirements.txt

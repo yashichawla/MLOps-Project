@@ -85,6 +85,22 @@ cd MLOps-Project/deploy
 ./start_dashboard_only.sh
 ```
 
+## Environment Variables
+
+Scripts automatically set:
+- `GOOGLE_APPLICATION_CREDENTIALS` - Path to GCP service account key
+- `GCS_BUCKET` - GCS bucket name (default: mlops-project-dvc)
+- `GCP_PROJECT_ID` - GCP project ID (default: break-the-bot)
+- `PORT` - API port (default: 8080)
+- `METRICS_API_URL` - Dashboard API URL (default: http://localhost:8080)
+
+To override, export before running:
+```bash
+export GCS_BUCKET=your-bucket-name
+export METRICS_API_URL=http://your-api-url
+./start_all.sh
+```
+
 ## Troubleshooting
 
 ### Script won't run
@@ -108,21 +124,4 @@ chmod +x start_all.sh start_api_only.sh start_dashboard_only.sh
 # On Windows Git Bash, you might need:
 bash start_all.sh
 ```
-
-## Environment Variables
-
-Scripts automatically set:
-- `GOOGLE_APPLICATION_CREDENTIALS` - Path to GCP service account key
-- `GCS_BUCKET` - GCS bucket name (default: mlops-project-dvc)
-- `GCP_PROJECT_ID` - GCP project ID (default: break-the-bot)
-- `PORT` - API port (default: 8080)
-- `METRICS_API_URL` - Dashboard API URL (default: http://localhost:8080)
-
-To override, export before running:
-```bash
-export GCS_BUCKET=your-bucket-name
-export METRICS_API_URL=http://your-api-url
-./start_all.sh
-```
-
 

@@ -132,4 +132,3 @@ Once both are running:
 4. ✅ Explore dashboard features
 5. ✅ Verify data visualization
 
-
