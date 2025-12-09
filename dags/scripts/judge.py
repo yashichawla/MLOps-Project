@@ -6,7 +6,19 @@ from typing import Dict, Any
 
 from groq import Groq   
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Lazy initialization: only create client when judge_llm() is called
+# This prevents errors during DAG parsing when GROQ_API_KEY might not be available
+_client = None
+
+def _get_client():
+    """Get or create Groq client (lazy initialization)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable is not set")
+        _client = Groq(api_key=api_key)
+    return _client
 
 MODEL_NAME = "llama-3.3-70b-versatile" 
 
@@ -69,6 +81,7 @@ Return ONLY the JSON object.
 """
 
     try:
+        client = _get_client()  # Lazy initialization - only create client when needed
         completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": payload}],
@@ -121,3 +134,5 @@ def append_judgement_to_csv(original_row: dict, judgment: Dict[str, Any], out_pa
         if not file_exists:
             writer.writeheader()
         writer.writerow(merged_row)
+        f.flush()
+        os.fsync(f.fileno())

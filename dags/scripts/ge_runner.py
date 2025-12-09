@@ -23,10 +23,25 @@ except ImportError as e:
     ) from e
 
 # --------- Paths ----------
-PIPELINE_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = PIPELINE_ROOT / "data" / "processed" / "processed_data.csv"
+# Use PROJECT_ROOT env var if set (Docker), otherwise calculate from script location (Composer)
+if "PROJECT_ROOT" in os.environ:
+    PIPELINE_ROOT = Path(os.environ["PROJECT_ROOT"]).resolve()
+else:
+    PIPELINE_ROOT = Path(__file__).resolve().parents[1]
 
-METRICS_DIR = PIPELINE_ROOT / "data" / "metrics"
+# Determine data directory: use DVC_DATA_DIR if set (data inside DVC repo), otherwise fall back to PROJECT_ROOT/data/
+# Data is now stored inside DVC repo at dvc_project/data/ when DVC_DATA_DIR is set
+if "DVC_DATA_DIR" in os.environ:
+    DATA_DIR = Path(os.environ["DVC_DATA_DIR"]).resolve()
+elif "PROJECT_ROOT" in os.environ:
+    DATA_DIR = Path(os.environ["PROJECT_ROOT"]) / "data"
+else:
+    # Fallback: calculate from script location (dags/scripts/ -> root-level data/)
+    # Go up from dags/scripts/ to dags/ to repo root, then to data/
+    DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+DEFAULT_INPUT = DATA_DIR / "processed" / "processed_data.csv"
+METRICS_DIR = DATA_DIR / "metrics"
 SCHEMA_BASELINE = METRICS_DIR / "schema" / "baseline" / "schema.json"
 STATS_BASELINE  = METRICS_DIR / "stats"  / "baseline" / "stats.json"
 
@@ -323,7 +338,7 @@ def _ge_build_and_validate(
     return hard, soft
 
 # ---- BASELINE ----
-def do_baseline(input_csv: Path, date_str: str, allowed_categories_env: Optional[str]):
+def do_baseline(input_csv: Path, date_str: str, allowed_categories_env: Optional[str], baseline_schema_path: Optional[Path] = None, metrics_dir: Optional[Path] = None):
     df = _load_df(input_csv)
     stats = _basic_stats(df)
 
@@ -342,18 +357,28 @@ def do_baseline(input_csv: Path, date_str: str, allowed_categories_env: Optional
     if allowed_categories_env:
         baseline["allowed_categories"] = [c.strip() for c in allowed_categories_env.split(",") if c.strip()]
 
-    _save_json(baseline, SCHEMA_BASELINE)
-    _save_json(stats, STATS_BASELINE)
+    # Use provided path or default
+    schema_path = baseline_schema_path if baseline_schema_path else SCHEMA_BASELINE
+    # Use provided metrics_dir or derive from schema path
+    output_metrics_dir = metrics_dir if metrics_dir else (schema_path.parent.parent.parent if baseline_schema_path else METRICS_DIR)
+    # Derive stats path from metrics_dir
+    stats_path = output_metrics_dir / "stats" / "baseline" / "stats.json"
 
-    print(f"[BASELINE] rows={stats['row_count']} -> {SCHEMA_BASELINE}, {STATS_BASELINE}")
+    _save_json(baseline, schema_path)
+    _save_json(stats, stats_path)
+
+    print(f"[BASELINE] rows={stats['row_count']} -> {schema_path}, {stats_path}")
 
 # ---- VALIDATE ----
-def do_validate(input_csv: Path, baseline_path: Path, date_str: str, allowed_categories_env: Optional[str]):
+def do_validate(input_csv: Path, baseline_path: Path, date_str: str, allowed_categories_env: Optional[str], metrics_dir: Optional[Path] = None):
     if not baseline_path.exists():
         print(f"Baseline schema missing: {baseline_path}", file=sys.stderr)
         sys.exit(2)
 
     df = _load_df(input_csv)
+
+    # Use provided metrics_dir or default
+    output_metrics_dir = metrics_dir if metrics_dir else METRICS_DIR
 
     # File-level validations (early)
     hard_fail_reasons: List[str] = []
@@ -377,14 +402,14 @@ def do_validate(input_csv: Path, baseline_path: Path, date_str: str, allowed_cat
 
     # If schema is already broken, write artifacts & exit hard fail
     run_stats = _basic_stats(df) if df.shape[0] > 0 else {"row_count": 0}
-    out_stats = METRICS_DIR / "stats" / date_str / "stats.json"
+    out_stats = output_metrics_dir / "stats" / date_str / "stats.json"
     _save_json(run_stats, out_stats)
 
     if hard_fail_reasons:
         anomalies = _enhance_anomalies_dict(
             hard_fail_reasons, soft_warn_reasons, df.shape[0]
         )
-        _save_json(anomalies, METRICS_DIR / "validation" / date_str / "anomalies.json")
+        _save_json(anomalies, output_metrics_dir / "validation" / date_str / "anomalies.json")
         print(f"[VALIDATE:FAIL] {hard_fail_reasons}", file=sys.stderr)
         sys.exit(1)
 
@@ -407,7 +432,8 @@ def do_validate(input_csv: Path, baseline_path: Path, date_str: str, allowed_cat
 
     # Baseline comparison and drift detection
     # Failures in baseline comparison are logged as soft warnings, not hard failures
-    baseline_stats_path = STATS_BASELINE
+    # Use metrics_dir to find baseline stats if provided, otherwise use default
+    baseline_stats_path = (output_metrics_dir / "stats" / "baseline" / "stats.json") if metrics_dir else STATS_BASELINE
     if baseline_stats_path.exists():
         try:
             baseline_stats = _load_json(baseline_stats_path)
@@ -422,11 +448,11 @@ def do_validate(input_csv: Path, baseline_path: Path, date_str: str, allowed_cat
     anomalies = _enhance_anomalies_dict(
         hard_fail_reasons, soft_warn_reasons, df.shape[0]
     )
-    _save_json(anomalies, METRICS_DIR / "validation" / date_str / "anomalies.json")
+    _save_json(anomalies, output_metrics_dir / "validation" / date_str / "anomalies.json")
 
     # Enrich stats.json with derived metrics expected by downstream tasks
     # No fallbacks - validation must complete successfully
-    out_stats = METRICS_DIR / "stats" / date_str / "stats.json"
+    out_stats = output_metrics_dir / "stats" / date_str / "stats.json"
     metrics_stats = _basic_stats(df)
     # Derive numeric fields (keep None when not applicable)
     null_prompt_count = int((~_nonempty(df["prompt"])).sum()) if "prompt" in df.columns else 0
@@ -469,18 +495,23 @@ def main():
 
     p1 = sub.add_parser("baseline")
     p1.add_argument("--input", default=str(DEFAULT_INPUT))
+    p1.add_argument("--baseline_schema", default=str(SCHEMA_BASELINE))
+    p1.add_argument("--metrics_dir", default=None)
     p1.add_argument("--date", default=dt.datetime.utcnow().strftime("%Y%m%d"))
 
     p2 = sub.add_parser("validate")
     p2.add_argument("--input", default=str(DEFAULT_INPUT))
     p2.add_argument("--baseline_schema", default=str(SCHEMA_BASELINE))
+    p2.add_argument("--metrics_dir", default=None)
     p2.add_argument("--date", default=dt.datetime.utcnow().strftime("%Y%m%d"))
 
     args = ap.parse_args()
     if args.cmd == "baseline":
-        do_baseline(Path(args.input), args.date, env_allowed)
+        metrics_dir = Path(args.metrics_dir) if args.metrics_dir else None
+        do_baseline(Path(args.input), args.date, env_allowed, Path(args.baseline_schema) if args.baseline_schema else None, metrics_dir)
     else:
-        do_validate(Path(args.input), Path(args.baseline_schema), args.date, env_allowed)
+        metrics_dir = Path(args.metrics_dir) if args.metrics_dir else None
+        do_validate(Path(args.input), Path(args.baseline_schema), args.date, env_allowed, metrics_dir)
 
 if __name__ == "__main__":
     sys.exit(main())

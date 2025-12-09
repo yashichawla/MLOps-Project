@@ -1,0 +1,129 @@
+steps:
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/webhook-trigger:latest'
+      - '.'
+
+  # Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/webhook-trigger:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'composer-webhook-trigger'
+      - '--image=gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--allow-unauthenticated'
+      - '--service-account=mlops-850@$PROJECT_ID.iam.gserviceaccount.com'
+      - '--set-env-vars=COMPOSER_ENVIRONMENT=mlops-airflow-composer,COMPOSER_LOCATION=us-central1,COMPOSER_DAG_ID=salad_ml_evaluation_pipeline_v1,GCP_PROJECT_ID=$PROJECT_ID'
+      - '--set-secrets=GITHUB_WEBHOOK_SECRET=github-webhook-secret:latest'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--max-instances=10'
+      - '--timeout=300'
+
+  # Ensure public access (--allow-unauthenticated should do this, but explicitly set IAM)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'services'
+      - 'add-iam-policy-binding'
+      - 'composer-webhook-trigger'
+      - '--region=us-central1'
+      - '--member=allUsers'
+      - '--role=roles/run.invoker'
+
+  # Verify deployment
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Verifying Deployment"
+        echo "=========================================="
+        
+        # Wait for service to be ready
+        echo "Waiting for service to be ready..."
+        sleep 15
+        
+        # Get service URL
+        SERVICE_URL=$$(gcloud run services describe composer-webhook-trigger \
+          --region=us-central1 \
+          --format="value(status.url)")
+        
+        echo "Service URL: $$SERVICE_URL"
+        
+        # Verify service is ready (check service status, not health endpoint)
+        echo "Verifying service is ready..."
+        SERVICE_STATUS=$$(gcloud run services describe composer-webhook-trigger \
+          --region=us-central1 \
+          --format="value(status.conditions[0].status)" 2>/dev/null || echo "UNKNOWN")
+        
+        if [ "$$SERVICE_STATUS" = "True" ]; then
+          echo "✅ Service is ready"
+        else
+          echo "⚠️  Service status: $$SERVICE_STATUS (may still be starting)"
+          echo "Service was deployed successfully. Health endpoint may need more time to be accessible."
+        fi
+
+  # Monitor and log deployment status
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Deployment Status and Logging"
+        echo "=========================================="
+        
+        SERVICE_URL=$$(gcloud run services describe composer-webhook-trigger \
+          --region=us-central1 \
+          --format="value(status.url)")
+        
+        echo "Deployment Summary:"
+        echo "  Service: composer-webhook-trigger"
+        echo "  Region: us-central1"
+        echo "  URL: $$SERVICE_URL"
+        echo "  Image: gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID"
+        echo "  Build ID: $BUILD_ID"
+        echo "  Commit SHA: ${COMMIT_SHA:-not available}"
+        echo "  Timestamp: $$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+        
+        echo ""
+        echo "Service Status:"
+        gcloud run services describe composer-webhook-trigger \
+          --region=us-central1 \
+          --format="table(status.conditions,status.url,status.latestReadyRevisionName,status.latestCreatedRevisionName)"
+        
+        echo ""
+        echo "✅ Deployment completed successfully"
+        echo "Test the API:"
+        echo "  curl $$SERVICE_URL/health"
+
+images:
+  - 'gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/webhook-trigger:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+

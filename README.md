@@ -77,22 +77,48 @@ Open the Airflow UI:
 
 You can update credentials in docker-compose.yml later.
 
-Stop services but keep data:
+---
 
+### 1.5. Set Up SMTP Connection in Airflow UI
+
+The DAG requires an SMTP connection named `gmail_smtp` to send email notifications. Set it up in the Airflow UI:
+
+1. **Open Airflow UI**: http://localhost:8080
+2. **Navigate to Connections**: Admin → Connections
+3. **Add New Connection**:
+   - Click the **"+"** button (Add a new record)
+   - **Connection Id**: `gmail_smtp`
+   - **Connection Type**: `Email`
+   - **Host**: `smtp.gmail.com`
+   - **Schema**: (leave empty)
+   - **Login**: Your Gmail address (e.g., `your.email@gmail.com`)
+   - **Password**: Your 16-character Gmail App Password (not your regular Gmail password)
+   - **Port**: `587`
+   - **Extra** (JSON):
+     ```json
+     {
+       "starttls": true,
+       "ssl": false
+     }
+     ```
+4. **Click Save**
+
+**Note**: If you haven't generated a Gmail App Password yet:
+- Go to [Google Account Security](https://myaccount.google.com/security)
+- Enable **2-Step Verification** (if not already enabled)
+- Go to **App Passwords**
+- Select **Mail** as the app and **Other (Custom name)** as the device
+- Enter a name (e.g., "Airflow") and click **Generate**
+- Copy the 16-character password (format: `xxxx xxxx xxxx xxxx`)
+
+**Alternative**: You can also use the provided script:
 ```bash
-docker compose down
-```
-
-Completely remove containers, logs, and database volumes:
-
-```bash
-docker compose down -v
-rm -rf airflow_artifacts/logs/*
+./scripts/setup_smtp_connection.sh your.email@gmail.com "xxxx xxxx xxxx xxxx"
 ```
 
 ---
 
-### 1.5. (Optional) Test Mode
+### 1.6. (Optional) Test Mode
 
 If you want to skip preprocessing and only validate a CSV:
 
@@ -112,7 +138,7 @@ MLOps-Project/
 ├── data/                         # Processed data, metrics, validation outputs (DVC-tracked)
 ├── documents/                    # PDFs, reports, and project documentation
 
-├── scripts/                      # All pipeline scripts for data, model, judge, metrics, and bias analysis
+├── dags/scripts/                 # All pipeline scripts (single source of truth for local and Composer)
 │   ├── preprocess_salad.py       # Preprocesses raw SALAD data into cleaned, standardized CSV
 │   ├── ge_runner.py              # Great Expectations validator (baseline + validation runs)
 │   ├── generate_model_responses.py  # Runs adversarial prompts through the victim LLM to produce responses
@@ -178,6 +204,8 @@ Note: model_metrics (additional_metrics.py) and bias_detection (bias_detection.p
 
 ## 4. Email Notifications (automatic)
 
+**Prerequisite**: Make sure you've set up the SMTP connection in Airflow UI (see [Section 1.5](#15-set-up-smtp-connection-in-airflow-ui)).
+
 The DAG now uses the unified validator's XCom output for all emails:
 
 | Trigger    | Email                            | Contents                                                                                                                                                                     | Trigger Rule                                     | Operator Type                  |
@@ -221,14 +249,31 @@ To add more recipients, edit in salad_preprocess_dag.py:
 to=["athatalnikar@gmail.com", "additional@email.com", "..."]
 ```
 
+### 4.4. Troubleshooting Email Issues
+
+**Connection Not Found Error**:
+- Ensure the SMTP connection `gmail_smtp` exists in Airflow UI (Admin → Connections)
+- Verify the connection ID is exactly `gmail_smtp` (case-sensitive)
+
+**Authentication Failed**:
+- Verify you're using a **Gmail App Password**, not your regular Gmail password
+- Check that 2-Step Verification is enabled on your Google Account
+- Verify connection settings: Host `smtp.gmail.com`, Port `587`, Extra `{"starttls": true, "ssl": false}`
+
+**Emails Not Received**:
+- Check spam/junk folder
+- Verify recipient email addresses in DAG code
+- Check Airflow task logs for email sending errors
+- Verify Gmail account has not been locked or restricted
+
 ---
 
 ## 5. Validation Source of Truth (Required for data pipeline submission)
 
-- `scripts/ge_runner.py` is the validator used by the Airflow DAG.
+- `dags/scripts/ge_runner.py` is the validator used by the Airflow DAG.
 - The DAG invokes:
-  - `python scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` if missing)
-  - `python scripts/ge_runner.py validate --input <csv> --baseline_schema <path> --date YYYYMMDD`
+  - `python dags/scripts/ge_runner.py baseline --input <csv> --date YYYYMMDD` (creates `data/metrics/schema/baseline/schema.json` if missing)
+  - `python dags/scripts/ge_runner.py validate --input <csv> --baseline_schema <path> --date YYYYMMDD`
 - Validation artifacts (source of truth):
   - `data/metrics/stats/YYYYMMDD/stats.json` (includes row_count, null/dup counts, unknown_category_rate, text_len_min/max, size_label_mismatch_count)
   - `data/metrics/validation/YYYYMMDD/anomalies.json` (hard_fail, soft_warn, info)
@@ -358,7 +403,7 @@ Below is a short summary of each, with placeholder names and corresponding outpu
 
 ### 10.1 Run Adversarial Prompts Through Model
 
-**Script:** `scripts/generate_model_responses.py`
+**Script:** `dags/scripts/generate_model_responses.py`
 
 **Output:** `data/responses/model_responses_<model_name>.csv`
 
@@ -368,9 +413,9 @@ Runs all adversarial prompts (from the processed SALAD dataset) through the sele
 
 ### 10.2 Judge LLM — Evaluate Responses for Safety
 
-**Utils script:** `scripts/judge.py`
+**Utils script:** `dags/scripts/judge.py`
 
-**Script:** `scripts/judge_responses.py`
+**Script:** `dags/scripts/judge_responses.py`
 
 **Output:** `data/judge/judgements_<model_name>.csv`
 
@@ -382,7 +427,7 @@ More details information at : [judge_llm.pdf](documents/judge_llm.pdf)
 
 ### 10.3 Bias Detection Module
 
-**Script:** `scripts/bias_detection.py`
+**Script:** `dags/scripts/bias_detection.py`
 
 **Output:** `data/bias/bias_report_<model_name>.json`
 
@@ -394,7 +439,7 @@ More detailed methodology reference at: [bias_detection_metrics.pdf](documents/b
 
 ### 10.4 Model Metrics Computation
 
-**Script:** `scripts/additional_metrics.py`
+**Script:** `dags/scripts/additional_metrics.py`
 
 **Output:** `data/metrics/additional_metrics_<model_name>.json`
 

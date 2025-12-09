@@ -1,0 +1,42 @@
+# Terraform Variables Configuration
+# Copy this file to terraform.tfvars and fill in your actual values
+# DO NOT commit terraform.tfvars to version control!
+
+# ============================================================================
+# Non-sensitive Configuration (can use defaults or override)
+# ============================================================================
+project_id                = "break-the-bot-480422"
+region                    = "us-central1"
+composer_environment_name = "mlops-airflow-composer"
+composer_node_count       = 3
+composer_machine_type     = "n1-standard-1"
+composer_disk_size_gb     = 30
+dvc_bucket_name           = "mlops-project-dvc-480422"
+composer_dag_id           = "salad_ml_evaluation_pipeline_v1"
+
+# ============================================================================
+# REQUIRED SECRETS - Fill these in with your actual values
+# ============================================================================
+
+# GitHub Webhook Secret
+# Generate a random secret for GitHub webhook authentication
+# You'll use this same secret when configuring the webhook in GitHub
+# Example: openssl rand -hex 32
+github_webhook_secret = "your_github_webhook_secret_here"
+
+# HuggingFace API Token
+# Get from: https://huggingface.co/settings/tokens
+# Format: hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+hf_token = "hf_your_huggingface_token_here"
+
+# Groq API Key
+# Get from: https://console.groq.com/
+# Format: gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+groq_api_key = "gsk_your_groq_api_key_here"
+
+# SMTP Credentials for Email Notifications
+# Gmail App Password (16-digit password)
+# Generate from: https://myaccount.google.com/apppasswords
+smtp_user     = "your_email@gmail.com"
+smtp_password = "your_16_digit_gmail_app_password"
+

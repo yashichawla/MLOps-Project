@@ -25,7 +25,8 @@ class Config:
     @classmethod
     def get_metrics_path(cls, model_name: str) -> str:
         """Get GCS path for model metrics file."""
-        return f"{cls.METRICS_PATH_PREFIX}/additional_metrics_{model_name}.json"
+        # Updated to match new location: data/metrics/additional/
+        return f"{cls.METRICS_PATH_PREFIX}/additional/additional_metrics_{model_name}.json"
     
     @classmethod
     def get_bias_report_path(cls, model_name: str) -> str:

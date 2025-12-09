@@ -1,4 +1,0 @@
-[core]
-    remote = gcsremote
-['remote "gcsremote"']
-    url = gs://mlops-project-dvc/mlops-project

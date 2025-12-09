@@ -106,9 +106,10 @@ class MetricsService:
         """
         models = []
         
-        # Scan for metrics files
-        metrics_prefix = f"{config.METRICS_PATH_PREFIX}/additional_metrics_"
-        blobs = self.gcs_client.list_blobs(config.METRICS_PATH_PREFIX)
+        # Scan for metrics files in the additional/ subdirectory
+        # Updated to match new location: data/metrics/additional/
+        metrics_prefix = f"{config.METRICS_PATH_PREFIX}/additional/"
+        blobs = self.gcs_client.list_blobs(metrics_prefix)
         
         # Extract model names from blob paths
         pattern = re.compile(r"additional_metrics_(.+)\.json$")

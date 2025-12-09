@@ -37,24 +37,28 @@ dags/__pycache__/
 scripts/__pycache__/
 
 # ============================================================================
+# DVC Files and Directories
+# ============================================================================
+# DVC cache and configuration
+.dvc/
+**/.dvc/
+# Note: dvc.lock should be tracked in git for reproducibility
+# DVC pointer files (optional - uncomment if you want to ignore them)
+# *.dvc
+# **/*.dvc
+
+# ============================================================================
 # Data Directories (DVC-tracked)
 # ============================================================================
 # DVC-managed data outputs - tracked via dvc.yaml
-# These directories are versioned in DVC remote storage, not in git
-data/processed/*
-!data/processed/*.dvc
-data/responses/
-data/judge/
-data/bias/
-data/metrics/
-data/validation_reports/
+# These files/directories are versioned in DVC remote storage, not in git
+# All outputs from dvc.yaml stages should be ignored
+# DVC project data is located at: dags/dvc_project/data/
 
-# Temporary and intermediate data
-data/tmp/
-
-# Keep .gitkeep files for empty directories
-!data/.gitkeep
-!data/**/.gitkeep
+# DVC project data directory (all DVC-tracked outputs)
+# Ignore all contents of dvc_project/data/ - these are versioned by DVC, not Git
+# Ignore all files and subdirectories in dvc_project/data/
+dags/dvc_project/data/**
 
 # ============================================================================
 # Configuration Files
@@ -85,6 +89,34 @@ data/tmp/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# ============================================================================
+# Terraform Files
+# ============================================================================
+# Terraform state files
+*.tfstate
+*.tfstate.*
+terraform.tfstate
+terraform.tfstate.*
+# Terraform directories
+.terraform/
+.terraform.lock.hcl
+# Terraform variable files (may contain sensitive data)
+terraform.tfvars
+*.tfvars
+*.tfvars.json
+*.tfvars.backup
+# Crash log files
+crash.log
+crash.*.log
+# Ignore override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
 
 # ============================================================================
 # Testing Files (Local Only)

@@ -39,7 +39,20 @@ services:
       - ./.secrets:/opt/airflow/secrets:ro
     working_dir: /opt/airflow/app
     command: >
-      bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
+      bash -lc "
+                # Fix DVC permissions (chmod fallback - chown requires root for mounted volumes)
+                if [ -d /opt/airflow/app/dags/dvc_project/.dvc ]; then
+                  chmod -R u+w /opt/airflow/app/dags/dvc_project/.dvc 2>/dev/null || true
+                fi
+                # Fix permissions for dvc_project/data directory (NEW - internal data structure)
+                if [ -d /opt/airflow/app/dags/dvc_project/data ]; then
+                  chmod -R u+w /opt/airflow/app/dags/dvc_project/data 2>/dev/null || true
+                fi
+                # Fix permissions for root-level data directory (legacy, may not exist)
+                if [ -d /opt/airflow/app/data ]; then
+                  chmod -R u+w /opt/airflow/app/data 2>/dev/null || true
+                fi
+                pip install --no-cache-dir --upgrade pip setuptools wheel &&
                 pip install --no-cache-dir -r requirements-docker.txt || true &&
                 airflow db migrate &&
                 airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true"
@@ -82,7 +95,20 @@ services:
       - ./.secrets:/opt/airflow/secrets:ro
     working_dir: /opt/airflow/app
     command: >
-      bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
+      bash -lc "
+                # Fix DVC permissions (chmod fallback - chown requires root for mounted volumes)
+                if [ -d /opt/airflow/app/dags/dvc_project/.dvc ]; then
+                  chmod -R u+w /opt/airflow/app/dags/dvc_project/.dvc 2>/dev/null || true
+                fi
+                # Fix permissions for dvc_project/data directory (NEW - internal data structure)
+                if [ -d /opt/airflow/app/dags/dvc_project/data ]; then
+                  chmod -R u+w /opt/airflow/app/dags/dvc_project/data 2>/dev/null || true
+                fi
+                # Fix permissions for root-level data directory (legacy, may not exist)
+                if [ -d /opt/airflow/app/data ]; then
+                  chmod -R u+w /opt/airflow/app/data 2>/dev/null || true
+                fi
+                pip install --no-cache-dir --upgrade pip setuptools wheel &&
                 pip install --no-cache-dir -r requirements-docker.txt || true &&
                 airflow webserver --port ${AIRFLOW_WEB_PORT:-8080}"
     ports:
@@ -126,7 +152,20 @@ services:
       - ./.secrets:/opt/airflow/secrets:ro
     working_dir: /opt/airflow/app
     command: >
-      bash -lc "pip install --no-cache-dir --upgrade pip setuptools wheel &&
+      bash -lc "
+                # Fix DVC permissions (chmod fallback - chown requires root for mounted volumes)
+                if [ -d /opt/airflow/app/dags/dvc_project/.dvc ]; then
+                  chmod -R u+w /opt/airflow/app/dags/dvc_project/.dvc 2>/dev/null || true
+                fi
+                # Fix permissions for dvc_project/data directory (NEW - internal data structure)
+                if [ -d /opt/airflow/app/dags/dvc_project/data ]; then
+                  chmod -R u+w /opt/airflow/app/dags/dvc_project/data 2>/dev/null || true
+                fi
+                # Fix permissions for root-level data directory (legacy, may not exist)
+                if [ -d /opt/airflow/app/data ]; then
+                  chmod -R u+w /opt/airflow/app/data 2>/dev/null || true
+                fi
+                pip install --no-cache-dir --upgrade pip setuptools wheel &&
                 pip install --no-cache-dir -r requirements-docker.txt || true &&
                 airflow scheduler"
     restart: unless-stopped

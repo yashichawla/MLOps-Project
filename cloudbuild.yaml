@@ -4,7 +4,7 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/metrics-api:$BUILD_ID'
       - '-t'
       - 'gcr.io/$PROJECT_ID/metrics-api:latest'
       - './deploy'
@@ -13,7 +13,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/metrics-api:$BUILD_ID'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -27,7 +27,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'metrics-api'
-      - '--image=gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+      - '--image=gcr.io/$PROJECT_ID/metrics-api:$BUILD_ID'
       - '--platform=managed'
       - '--region=us-central1'
       - '--allow-unauthenticated'
@@ -38,8 +38,107 @@ steps:
       - '--max-instances=10'
       - '--timeout=300'
 
+  # Verify deployment and GCS connectivity
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Verifying Deployment"
+        echo "=========================================="
+        
+        # Wait for service to be ready
+        echo "Waiting for service to be ready..."
+        sleep 15
+        
+        # Get service URL
+        SERVICE_URL=$$(gcloud run services describe metrics-api \
+          --region=us-central1 \
+          --format="value(status.url)")
+        
+        echo "Service URL: $$SERVICE_URL"
+        
+        # Health check with retries
+        MAX_RETRIES=5
+        RETRY_COUNT=0
+        HEALTH_CHECK_PASSED=false
+        
+        while [ $$RETRY_COUNT -lt $$MAX_RETRIES ]; do
+          echo "Health check attempt $$((RETRY_COUNT + 1))/$$MAX_RETRIES..."
+          
+          HTTP_CODE=$$(curl -s -o /dev/null -w "%{http_code}" $$SERVICE_URL/health || echo "000")
+          HEALTH_RESPONSE=$$(curl -s $$SERVICE_URL/health || echo "{}")
+          
+          if [ "$$HTTP_CODE" = "200" ]; then
+            echo "✅ Health check passed"
+            echo "Response: $$HEALTH_RESPONSE"
+            
+            # Check if GCS connectivity is working
+            if echo "$$HEALTH_RESPONSE" | grep -q '"gcs_connected":true'; then
+              echo "✅ GCS connectivity verified"
+              HEALTH_CHECK_PASSED=true
+              break
+            else
+              echo "⚠️  Health endpoint returned 200 but GCS not connected"
+            fi
+          else
+            echo "⏳ Health check returned HTTP $$HTTP_CODE, retrying..."
+          fi
+          
+          RETRY_COUNT=$$((RETRY_COUNT + 1))
+          sleep 5
+        done
+        
+        if [ "$$HEALTH_CHECK_PASSED" = false ]; then
+          echo "❌ Health check failed after $$MAX_RETRIES attempts"
+          exit 1
+        fi
+
+  # Monitor and log deployment status
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Deployment Status and Logging"
+        echo "=========================================="
+        
+        SERVICE_URL=$$(gcloud run services describe metrics-api \
+          --region=us-central1 \
+          --format="value(status.url)")
+        
+        echo "Deployment Summary:"
+        echo "  Service: metrics-api"
+        echo "  Region: us-central1"
+        echo "  URL: $$SERVICE_URL"
+        echo "  Image: gcr.io/$PROJECT_ID/metrics-api:$BUILD_ID"
+        echo "  Build ID: $BUILD_ID"
+        echo "  Commit SHA: ${COMMIT_SHA:-not available}"
+        echo "  Timestamp: $$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+        
+        echo ""
+        echo "Service Status:"
+        gcloud run services describe metrics-api \
+          --region=us-central1 \
+          --format="table(status.conditions,status.url,status.latestReadyRevisionName,status.latestCreatedRevisionName)"
+        
+        echo ""
+        echo "Recent Service Logs (last 5 entries):"
+        gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=metrics-api" \
+          --limit=5 \
+          --format="table(timestamp,severity,textPayload)" \
+          --freshness=5m || echo "Could not fetch recent logs"
+        
+        echo ""
+        echo "✅ Deployment completed successfully"
+        echo "Test the API:"
+        echo "  curl $$SERVICE_URL/health"
+        echo "  curl $$SERVICE_URL/metrics/all"
+
 images:
-  - 'gcr.io/$PROJECT_ID/metrics-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/metrics-api:$BUILD_ID'
   - 'gcr.io/$PROJECT_ID/metrics-api:latest'
 
 options:
