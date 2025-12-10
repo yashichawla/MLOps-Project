@@ -3028,10 +3028,11 @@ except:
                             try:
                                 # Determine content-type based on file extension
                                 content_type = "application/json" if file.suffix == ".json" else "text/csv" if file.suffix == ".csv" else None
-                                cp_cmd = ["gcloud", "storage", "cp", str(file), target_path]
+                                
                                 if content_type:
-                                    cp_cmd.insert(-1, "--content-type")
-                                    cp_cmd.insert(-1, content_type)
+                                    cp_cmd = ["gcloud", "storage", "cp", "--content-type", content_type, str(file), target_path]
+                                else:
+                                    cp_cmd = ["gcloud", "storage", "cp", str(file), target_path]
                                 
                                 cp_result = subprocess.run(
                                     cp_cmd,
@@ -3070,18 +3071,29 @@ except:
         # Summary
         logger.info("")
         if metrics_synced or bias_synced:
-            logger.info("[SUCCESS] API-required files synced to structured paths")
+            if overall_success:
+                logger.info("[SUCCESS] API-required files synced to structured paths")
+            else:
+                logger.warning("[WARNING] Partial success: Some files synced, but some failed")
+                logger.warning("  Failed files: %d", files_failed + bias_files_failed)
+            
             if metrics_synced:
                 logger.info("   ✓ Additional metrics: %s/metrics/additional/", api_bucket)
             if bias_synced:
                 logger.info("   ✓ Bias reports: %s/bias/", api_bucket)
-            return {
-                "status": "success",
-                "metrics_synced": metrics_synced,
-                "bias_synced": bias_synced,
-                "files_copied": files_copied + bias_files_copied,
-                "files_failed": files_failed + bias_files_failed,
-            }
+            
+            # Only return success if everything succeeded, otherwise raise exception
+            if overall_success:
+                return {
+                    "status": "success",
+                    "metrics_synced": metrics_synced,
+                    "bias_synced": bias_synced,
+                    "files_copied": files_copied + bias_files_copied,
+                    "files_failed": files_failed + bias_files_failed,
+                }
+            else:
+                logger.error("[ERROR] Some files failed to sync")
+                raise AirflowFailException(f"Some files failed to sync to API paths ({files_failed + bias_files_failed} failed, {files_copied + bias_files_copied} succeeded)")
         elif not overall_success:
             logger.error("[ERROR] Some files failed to sync")
             raise AirflowFailException("Some files failed to sync to API paths")
