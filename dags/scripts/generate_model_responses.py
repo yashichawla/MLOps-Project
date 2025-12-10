@@ -1,4 +1,4 @@
-# scripts/generate_model_responses.py
+# dags/scripts/generate_model_responses.py
 """
 Generate model responses for one or more Hugging Face models.
 
@@ -35,11 +35,20 @@ else:
 # Data is now stored inside DVC repo at dvc_project/data/ when DVC_DATA_DIR is set
 if "DVC_DATA_DIR" in os.environ:
     DATA_DIR = Path(os.environ["DVC_DATA_DIR"]).resolve()
+    print(f"[DEBUG] Using DVC_DATA_DIR from environment: {DATA_DIR}")
 elif "PROJECT_ROOT" in os.environ:
     DATA_DIR = Path(os.environ["PROJECT_ROOT"]) / "data"
+    print(f"[DEBUG] Using PROJECT_ROOT/data: {DATA_DIR}")
 else:
-    # Fallback: calculate from script location (dags/scripts/ -> root-level data/)
-    DATA_DIR = SCRIPT_DIR.parent.parent.parent / "data"
+    # Fallback: calculate from script location (dags/scripts/ -> dags/ -> repo root -> data/)
+    # SCRIPT_DIR is dags/scripts/, so parent.parent is repo root
+    DATA_DIR = SCRIPT_DIR.parent.parent / "data"
+    print(f"[DEBUG] Using fallback path calculation: {DATA_DIR}")
+    print(f"[DEBUG]   SCRIPT_DIR: {SCRIPT_DIR}")
+    print(f"[DEBUG]   SCRIPT_DIR.parent: {SCRIPT_DIR.parent}")
+    print(f"[DEBUG]   SCRIPT_DIR.parent.parent: {SCRIPT_DIR.parent.parent}")
+
+print(f"[DEBUG] Final DATA_DIR: {DATA_DIR} (exists: {DATA_DIR.exists()})")
 
 PROMPT_COL = "prompt"
 DEFAULT_META_COLS = ["category", "prompt_id", "text_length", "size_label"]
@@ -162,7 +171,10 @@ def _make_client(model_id: str, provider: Optional[str] = None, timeout_s: int =
 
 
 def _infer_one(client: InferenceClient, prompt: str, params: Dict[str, Any], system_prompt: str, prefer_chat: bool) -> Tuple[str, int]:
-    """Run inference using chat or text-generation, with a single fallback."""
+    """
+    Run inference using chat or text-generation, with fallback to text-generation.
+    Matches the old working script behavior.
+    """
     t0 = time.time()
     effective_prompt = prompt if not system_prompt.strip() else f"{system_prompt}\n\n{prompt}"
 
@@ -174,10 +186,24 @@ def _infer_one(client: InferenceClient, prompt: str, params: Dict[str, Any], sys
         else:
             out = client.text_generation(prompt=effective_prompt, max_new_tokens=params["max_new_tokens"], temperature=params["temperature"], top_p=params["top_p"], return_full_text=False)
             text = out if isinstance(out, str) else out[0].get("generated_text", str(out))
-    except Exception:
+    except Exception as e:
+        # Log the original error before falling back
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"[WARN] Primary API call failed ({error_type}): {error_msg[:300]}")
+        print(f"[INFO] Falling back to text_generation API...")
+        
         # Fallback once via text-generation (keeps it simple and broadly supported)
-        out = client.text_generation(prompt=effective_prompt, max_new_tokens=min(64, int(params["max_new_tokens"])), temperature=params["temperature"], top_p=params["top_p"], return_full_text=False)
-        text = out if isinstance(out, str) else (out[0].get("generated_text", str(out)) if isinstance(out, list) and out else "")
+        try:
+            out = client.text_generation(prompt=effective_prompt, max_new_tokens=min(64, int(params["max_new_tokens"])), temperature=params["temperature"], top_p=params["top_p"], return_full_text=False)
+            text = out if isinstance(out, str) else (out[0].get("generated_text", str(out)) if isinstance(out, list) and out else "")
+            print(f"[INFO] Fallback to text_generation succeeded")
+        except Exception as fallback_error:
+            # If fallback also fails, raise with both errors for debugging
+            fallback_error_type = type(fallback_error).__name__
+            fallback_error_msg = str(fallback_error)
+            print(f"[ERROR] Fallback to text_generation also failed: {fallback_error_type}: {fallback_error_msg[:300]}")
+            raise RuntimeError(f"Both primary ({error_type}: {error_msg[:100]}) and fallback ({fallback_error_type}: {fallback_error_msg[:100]}) failed") from fallback_error
 
     return text, int((time.time() - t0) * 1000)
 
@@ -204,6 +230,20 @@ def run_model_response_generation() -> List[Dict[str, Any]]:
             else:
                 csv_path = str(DATA_DIR / csv_path)
         
+        # Debug: Log path resolution
+        print(f"[DEBUG] Path resolution for {name}:")
+        print(f"  DATA_DIR: {DATA_DIR}")
+        print(f"  DATA_DIR exists: {DATA_DIR.exists()}")
+        print(f"  Original csv_path from config: {m['csv_path']}")
+        print(f"  Resolved csv_path: {csv_path}")
+        print(f"  Resolved csv_path exists: {Path(csv_path).exists()}")
+        
+        # Verify input CSV exists before proceeding
+        if not Path(csv_path).exists():
+            error_msg = f"Input CSV not found: {csv_path}. DATA_DIR={DATA_DIR}, original_path={m['csv_path']}"
+            print(f"[ERROR] {error_msg}")
+            raise FileNotFoundError(error_msg)
+        
         # Load ALL prompts from processed CSV (don't sample yet)
         df_all = _load_prompts(
             csv_path=csv_path, 
@@ -221,6 +261,12 @@ def run_model_response_generation() -> List[Dict[str, Any]]:
                 out_path = DATA_DIR / out_path_str
         else:
             out_path = Path(out_path_str)
+        
+        # Debug: Log output path resolution
+        print(f"  Original out_path from config: {m['out_path']}")
+        print(f"  Resolved out_path: {out_path}")
+        print(f"  Resolved out_path parent exists: {out_path.parent.exists()}")
+        
         processed_prompts = _get_processed_prompts(out_path, model_id)
         print(f"[INFO] Loaded {len(df_all)} total prompts from {csv_path}")
         print(f"[INFO] Found {len(processed_prompts)} already-processed prompts for model {model_id}")
@@ -291,22 +337,28 @@ def run_model_response_generation() -> List[Dict[str, Any]]:
                     break
                 except Exception as e:
                     attempt += 1
-                    error_msg = str(e)
                     error_type = type(e).__name__
-                    print(f"[ERROR] Attempt {attempt}/{retries + 1} failed for prompt {idx}: {error_type}: {error_msg}")
-                    if attempt > retries:
-                        # Store full error message (up to 200 chars) in status for debugging
-                        text, latency, status = "", -1, f"error:{error_type}:{error_msg[:200]}"
-                        err += 1
-                        print(f"[ERROR] All retries exhausted for prompt {idx}. Final error: {error_type}: {error_msg}")
-                        # Print traceback for first failure to help debug
+                    error_msg = str(e)
+                    
+                    # Log attempt details
+                    if attempt <= retries:
+                        print(f"[WARN] Attempt {attempt}/{retries + 1} failed for prompt {idx}: {error_type}")
+                        print(f"[WARN] Error details: {error_msg[:300]}")
+                        print(f"[INFO] Retrying in {backoff * attempt}s...")
+                        time.sleep(backoff * attempt)
+                    else:
+                        # All retries exhausted
+                        print(f"[ERROR] All {retries + 1} attempts failed for prompt {idx}")
+                        print(f"[ERROR] Final error: {error_type}: {error_msg[:500]}")
+                        # Print full traceback for first failure to help debug
                         if idx == 1:
                             import traceback
                             print(f"[ERROR] Full traceback for first failure:")
                             traceback.print_exc()
+                        
+                        text, latency, status = "", -1, f"error:{error_type}:{error_msg[:200]}"
+                        err += 1
                         break
-                    print(f"[INFO] Retrying in {backoff * attempt}s...")
-                    time.sleep(backoff * attempt)
 
             rows.append({
                 "ts_iso": ts_iso,
@@ -404,6 +456,20 @@ def run_model_response_generation() -> List[Dict[str, Any]]:
                 print(f"[INFO]  Created new file with {len(successful_rows)} successful responses: {out_path}")
         else:
             print(f"[INFO] No successful responses to write for {name} (all {len(rows)} failed)")
+            # Create empty file with headers if file doesn't exist
+            if not out_path.exists():
+                # Define column headers matching the row structure
+                column_headers = [
+                    "ts_iso", "prompt_id", "category", "text_length", "size_label",
+                    "model", "provider", "prompt", "response", "latency_ms", "status", "meta_json"
+                ]
+                empty_df = pd.DataFrame(columns=column_headers)
+                empty_df.to_csv(out_path, index=False)
+                # Explicitly flush and sync to ensure file is written to disk
+                with open(out_path, 'r+b') as f:
+                    f.flush()
+                    os.fsync(f.fileno())
+                print(f"[INFO] Created empty CSV file with headers at {out_path} (all prompts failed)")
 
         avg_latency = int(total_latency / ok) if ok else 0
         summaries.append({

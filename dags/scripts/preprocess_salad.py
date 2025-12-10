@@ -1,4 +1,4 @@
-# preprocess_salad_data.py
+# dags/scripts/preprocess_salad.py
 
 """
 Preprocessing pipeline for Salad-Data and other safety datasets.
@@ -22,6 +22,27 @@ import pandas as pd
 import json
 import os
 import uuid
+from pathlib import Path
+
+# --------------------------
+# PATH SETUP
+# --------------------------
+
+# Use PROJECT_ROOT env var if set (Docker), otherwise calculate from script location (Composer)
+SCRIPT_DIR = Path(__file__).resolve().parent
+DAGS_DIR = SCRIPT_DIR.parent  # This is /home/airflow/gcs/dags/ in Composer, /opt/airflow/dags/ in local
+PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", str(DAGS_DIR.parent))).resolve()
+
+# Config path: try PROJECT_ROOT/config/ first (for local), then DAGS_DIR/config/ (for Composer)
+# In local Docker: PROJECT_ROOT=/opt/airflow/app, config is at /opt/airflow/app/config/
+# In Composer: PROJECT_ROOT=/home/airflow/gcs, config is at /home/airflow/gcs/dags/config/
+if (PROJECT_ROOT / "config" / "data_sources.json").exists():
+    DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "data_sources.json"
+elif (DAGS_DIR / "config" / "data_sources.json").exists():
+    DEFAULT_CONFIG_PATH = DAGS_DIR / "config" / "data_sources.json"
+else:
+    # Fallback: use DAGS_DIR/config/ (will create if needed in __main__)
+    DEFAULT_CONFIG_PATH = DAGS_DIR / "config" / "data_sources.json"
 
 # --------------------------
 # CONFIG LOADING
@@ -257,10 +278,13 @@ def run_preprocessing(
 # --------------------------
 
 if __name__ == "__main__":
-    CONFIG_PATH = "config/data_sources.json"
-    os.makedirs("config", exist_ok=True)
+    # Use the resolved config path
+    CONFIG_PATH = DEFAULT_CONFIG_PATH
+    
+    # Ensure config directory exists
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    if not os.path.exists(CONFIG_PATH):
+    if not CONFIG_PATH.exists():
         example_config = {
             "data_sources": [
                 {
@@ -274,6 +298,6 @@ if __name__ == "__main__":
         }
         with open(CONFIG_PATH, "w") as f:
             json.dump(example_config, f, indent=2)
-        print(" Example config file created at config/data_sources.json")
+        print(f" Example config file created at {CONFIG_PATH}")
 
-    run_preprocessing(CONFIG_PATH)
+    run_preprocessing(str(CONFIG_PATH))
