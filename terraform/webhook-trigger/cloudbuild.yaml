@@ -20,36 +20,38 @@ steps:
       - 'push'
       - 'gcr.io/$PROJECT_ID/webhook-trigger:latest'
 
-  # Deploy to Cloud Run
+  # Get Composer Airflow URI and deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: 'bash'
     args:
-      - 'run'
-      - 'deploy'
-      - 'composer-webhook-trigger'
-      - '--image=gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID'
-      - '--platform=managed'
-      - '--region=us-central1'
-      - '--allow-unauthenticated'
-      - '--service-account=mlops-850@$PROJECT_ID.iam.gserviceaccount.com'
-      - '--set-env-vars=COMPOSER_ENVIRONMENT=mlops-airflow-composer,COMPOSER_LOCATION=us-central1,COMPOSER_DAG_ID=salad_ml_evaluation_pipeline_v1,GCP_PROJECT_ID=$PROJECT_ID'
-      - '--set-secrets=GITHUB_WEBHOOK_SECRET=github-webhook-secret:latest'
-      - '--memory=512Mi'
-      - '--cpu=1'
-      - '--max-instances=10'
-      - '--timeout=300'
-
-  # Ensure public access (--allow-unauthenticated should do this, but explicitly set IAM)
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'services'
-      - 'add-iam-policy-binding'
-      - 'composer-webhook-trigger'
-      - '--region=us-central1'
-      - '--member=allUsers'
-      - '--role=roles/run.invoker'
+      - '-c'
+      - |
+        echo "Getting Composer Airflow URI..."
+        AIRFLOW_URI=$$(gcloud composer environments describe mlops-airflow-composer \
+          --location us-central1 \
+          --format "value(config.airflowUri)" \
+          --project $PROJECT_ID)
+        
+        if [ -z "$$AIRFLOW_URI" ]; then
+          echo "❌ Error: Could not get Airflow URI from Composer environment"
+          exit 1
+        fi
+        
+        echo "Airflow URI: $$AIRFLOW_URI"
+        
+        echo "Deploying to Cloud Run..."
+        gcloud run deploy composer-webhook-trigger \
+          --image=gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID \
+          --platform=managed \
+          --region=us-central1 \
+          --allow-unauthenticated \
+          --service-account=mlops-850@$PROJECT_ID.iam.gserviceaccount.com \
+          --set-env-vars=COMPOSER_ENVIRONMENT=mlops-airflow-composer,COMPOSER_LOCATION=us-central1,COMPOSER_DAG_ID=salad_ml_evaluation_pipeline_v1,GCP_PROJECT_ID=$PROJECT_ID,COMPOSER_AIRFLOW_URI=$$AIRFLOW_URI \
+          --set-secrets=GITHUB_WEBHOOK_SECRET=github-webhook-secret:latest \
+          --memory=512Mi \
+          --cpu=1 \
+          --max-instances=10 \
+          --timeout=300
 
   # Verify deployment
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'

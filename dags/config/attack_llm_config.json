@@ -52,7 +52,7 @@
       "seed": 42,
       "system_prompt": "",
       "sample": true,
-      "n_samples": 5,
+      "n_samples": 10,
       "csv_path": "data/processed/processed_data.csv",
       "out_path": "data/responses/model_responses_moonshot_instruct.csv"
     },

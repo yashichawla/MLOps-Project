@@ -42,7 +42,20 @@ async def startup_event():
         logger.error("GCP_PROJECT_ID environment variable is required")
         raise ValueError("GCP_PROJECT_ID environment variable is required")
     
-    COMPOSER_API_BASE = f"https://{COMPOSER_LOCATION}-{COMPOSER_ENVIRONMENT}.p.{GCP_PROJECT_ID}.appspot.com/api/v1"
+    # Get Airflow URI from environment variable (set by Cloud Build)
+    airflow_uri = os.getenv("COMPOSER_AIRFLOW_URI")
+    if not airflow_uri:
+        logger.error("COMPOSER_AIRFLOW_URI environment variable is required")
+        raise ValueError(
+            "COMPOSER_AIRFLOW_URI environment variable is required. "
+            "It should be set during Cloud Run deployment by Cloud Build."
+        )
+    
+    # Remove trailing slash if present
+    airflow_uri = airflow_uri.rstrip('/')
+    COMPOSER_API_BASE = f"{airflow_uri}/api/v1"
+    logger.info(f"Using Airflow URI: {airflow_uri}")
+    
     logger.info(f"Webhook service initialized:")
     logger.info(f"  Composer Environment: {COMPOSER_ENVIRONMENT}")
     logger.info(f"  Composer Location: {COMPOSER_LOCATION}")
