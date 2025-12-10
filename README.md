@@ -132,36 +132,63 @@ Set TEST_MODE = true
 
 ```plaintext
 MLOps-Project/
-├── .dvc/                         # DVC metadata + remote storage config
+├── airflow_artifacts/            # Airflow logs and artifacts
+│   └── logs/                     # DAG execution logs
 ├── config/                       # Project-wide configuration files
+│   ├── attack_llm_config.json   # Model configuration for evaluation
+│   └── data_sources.json        # Data source configuration
 ├── dags/                         # Airflow DAGs for data + model pipelines
-├── data/                         # Processed data, metrics, validation outputs (DVC-tracked)
-├── documents/                    # PDFs, reports, and project documentation
-
-├── dags/scripts/                 # All pipeline scripts (single source of truth for local and Composer)
-│   ├── preprocess_salad.py       # Preprocesses raw SALAD data into cleaned, standardized CSV
-│   ├── ge_runner.py              # Great Expectations validator (baseline + validation runs)
-│   ├── generate_model_responses.py  # Runs adversarial prompts through the victim LLM to produce responses
-│   ├── judge.py                  # LLM-as-a-Judge scoring logic for safety + refusal evaluation
-│   ├── judge_responses.py        # Orchestrates judgement creation for all model response CSVs
-│   ├── bias_detection.py         # Bias slicing + fairness analysis across groups/categories
-│   ├── additional_metrics.py     # Computes attack success, refusal stats, and other model metrics
-
+│   ├── config/                   # DAG-specific configs (synced to Composer)
+│   │   ├── attack_llm_config.json
+│   │   └── data_sources.json
+│   ├── dvc_project/              # DVC repository (data versioning)
+│   │   ├── data/                 # Versioned data (processed, responses, metrics, etc.)
+│   │   ├── dvc.lock              # DVC lock file
+│   │   └── dvc.yaml              # DVC pipeline definition
+│   ├── salad_preprocess_dag.py   # Main Airflow DAG definition
+│   └── scripts/                  # All pipeline scripts (single source of truth for local and Composer)
+│       ├── preprocess_salad.py   # Preprocesses raw SALAD data into cleaned, standardized CSV
+│       ├── ge_runner.py          # Great Expectations validator (baseline + validation runs)
+│       ├── generate_model_responses.py  # Runs adversarial prompts through the victim LLM to produce responses
+│       ├── judge.py              # LLM-as-a-Judge scoring logic for safety + refusal evaluation
+│       ├── judge_responses.py    # Orchestrates judgement creation for all model response CSVs
+│       ├── bias_detection.py     # Bias slicing + fairness analysis across groups/categories
+│       └── additional_metrics.py # Computes attack success, refusal stats, and other model metrics
+├── deploy/                       # Deployment artifacts and services
+│   ├── api/                      # Metrics API service (FastAPI)
+│   │   ├── routes/               # API route handlers
+│   │   ├── config.py             # API configuration
+│   │   ├── gcs_client.py         # GCS client for reading metrics
+│   │   └── main.py               # FastAPI application entry point
+│   ├── dashboard/                # Streamlit dashboard application
+│   │   ├── components/           # Dashboard UI components
+│   │   ├── app.py                # Main dashboard application
+│   │   └── api_client.py         # API client for dashboard
+│   ├── Dockerfile                # Docker image for Metrics API
+│   ├── deploy.sh                 # Deployment script for Cloud Run
+│   └── start_*.sh                # Service startup scripts
+├── terraform/                    # Infrastructure as Code (Terraform)
+│   ├── webhook-trigger/          # GitHub webhook trigger service
+│   ├── composer.tf               # Cloud Composer configuration
+│   ├── iam.tf                    # IAM roles and permissions
+│   ├── secrets.tf                # Secret Manager resources
+│   ├── webhook-trigger.tf        # Webhook service infrastructure
+│   └── setup-secrets.sh          # Script to set up secrets
+├── scripts/                      # Utility scripts
+│   ├── setup_smtp_connection.sh  # SMTP connection setup
+│   └── setup_smtp_connection_composer.sh
 ├── tests/                        # Unit tests for validation, preprocessing, and pipeline tasks
-├── .airflow.env                  # Airflow environment variables
-├── .dockerignore                 # Files excluded from Docker build
-├── .dvcignore                    # Files excluded from DVC tracking
-├── .gitignore                    # Git ignore rules
-├── README.md                     # Main project documentation
+├── documents/                    # PDFs, reports, and project documentation
+├── cloudbuild.yaml               # Cloud Build configuration for API deployment
 ├── docker-compose.yml            # Airflow + Postgres + Scheduler stack
-├── dvc.lock                      # Auto-generated DVC state file
-├── dvc.yaml                      # DVC pipeline definition
 ├── setup.md                      # Complete setup guide
 ├── setup.sh                      # Automated setup script
-├── pyproject.toml                # Python project + dependency configuration
+├── deployment_guide.md           # Cloud deployment instructions
+├── quick_start.md                # Quick start guide
+├── pyproject.toml                 # Python project + dependency configuration
 ├── pytest.ini                    # Pytest configuration
 ├── requirements-docker.txt       # Dependencies installed inside Docker
-├── requirements.txt              # Local development dependencies
+└── requirements.txt              # Local development dependencies
 
 ```
 
@@ -360,8 +387,8 @@ This script:
 ### 6.2 Remote Storage Details
 
 ```text
-GCS Bucket: gs://mlops-project-dvc
-GCP Project ID: break-the-bot
+GCS Bucket: gs://mlops-project-dvc-480422
+GCP Project ID: break-the-bot-480422
 ```
 
 ---
