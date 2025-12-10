@@ -339,6 +339,22 @@ git push
 
 **Example:** When adding `model_responses`, `judge_outputs`, `bias_detection`, and `additional_metrics` stages, these outputs already exist from previous Airflow DAG runs. You only need `dvc commit` to tell DVC to track them, not `dvc repro` to regenerate them.
 
+#### 6.1.3 Syncing dvc.lock from Composer to Git
+
+After DAG runs in Composer, the `dvc.lock` file is updated in the Composer bucket but not automatically committed to git. To sync it:
+
+```bash
+# Pull dvc.lock from Composer and commit to git
+./sync_dvc_lock_from_composer.sh
+```
+
+This script:
+- Downloads `dvc.lock` from the Composer GCS bucket
+- Checks if it has changes
+- Commits and pushes to git (with confirmation prompts)
+
+**Note:** The DAG updates `dvc.lock` in Composer, but you need to manually sync it to git to keep the repository in sync.
+
 ---
 
 ### 6.2 Remote Storage Details
