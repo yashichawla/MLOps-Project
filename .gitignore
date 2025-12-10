@@ -98,6 +98,10 @@ Desktop.ini
 *.tfstate.*
 terraform.tfstate
 terraform.tfstate.*
+# Terraform plan files (contain sensitive data)
+*.tfplan
+tfplan
+terraform/tfplan
 # Terraform directories
 .terraform/
 .terraform.lock.hcl
