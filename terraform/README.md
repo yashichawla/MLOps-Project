@@ -92,12 +92,67 @@ The webhook trigger service (`webhook-trigger/`) is a FastAPI application that:
 - Checks if config files changed
 - Triggers Composer DAG via Airflow REST API
 
-To build and deploy:
+### Deployment
+
+The webhook service is deployed using Cloud Build, which automatically:
+- Builds the Docker image
+- Pushes to Container Registry
+- Fetches the Composer Airflow URI
+- Deploys to Cloud Run with the correct configuration
+
+**Deploy using Cloud Build:**
 
 ```bash
-cd webhook-trigger
-docker build -t gcr.io/PROJECT_ID/webhook-trigger:latest .
-docker push gcr.io/PROJECT_ID/webhook-trigger:latest
+cd terraform/webhook-trigger
+gcloud builds submit --config cloudbuild.yaml
+```
+
+The Cloud Build configuration will:
+1. Build the Docker image from `webhook-trigger/`
+2. Push to Container Registry
+3. Get the Composer Airflow URI automatically
+4. Deploy to Cloud Run with environment variables:
+   - `COMPOSER_ENVIRONMENT`: Composer environment name
+   - `COMPOSER_LOCATION`: GCP region
+   - `COMPOSER_DAG_ID`: DAG to trigger
+   - `GCP_PROJECT_ID`: GCP project ID
+   - `COMPOSER_AIRFLOW_URI`: Airflow URI (fetched automatically)
+   - `GITHUB_WEBHOOK_SECRET`: From Secret Manager
+
+**Get the webhook URL after deployment:**
+
+```bash
+gcloud run services describe composer-webhook-trigger \
+  --region us-central1 \
+  --format "value(status.url)"
+```
+
+**Configure GitHub Webhook:**
+
+1. Go to your GitHub repository → Settings → Webhooks
+2. Add webhook with:
+   - **Payload URL**: `https://composer-webhook-trigger-XXXXX.us-central1.run.app/webhook`
+   - **Content type**: `application/json`
+   - **Secret**: Use the same secret from `GITHUB_WEBHOOK_SECRET`
+   - **Events**: Select "Just the push event"
+3. Save the webhook
+
+**Testing the Webhook:**
+
+After configuring the GitHub webhook, push a change to any of these config files:
+- `config/data_sources.json`
+- `config/attack_llm_config.json`
+- `dags/config/data_sources.json`
+- `dags/config/attack_llm_config.json`
+
+The webhook will automatically trigger the DAG in Composer.
+
+**Monitor Webhook Logs:**
+
+```bash
+gcloud run services logs read composer-webhook-trigger \
+  --region us-central1 \
+  --limit 20
 ```
 
 ## Documentation

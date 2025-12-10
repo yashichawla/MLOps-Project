@@ -39,6 +39,18 @@ steps:
         
         echo "Airflow URI: $$AIRFLOW_URI"
         
+        echo "Getting Composer bucket name..."
+        COMPOSER_BUCKET=$$(gcloud composer environments describe mlops-airflow-composer \
+          --location us-central1 \
+          --format "value(config.dagGcsPrefix)" \
+          --project $PROJECT_ID | sed 's|/dags$$||' | sed 's|^gs://||' || echo "")
+        
+        if [ -z "$$COMPOSER_BUCKET" ]; then
+          echo "⚠️  Warning: Could not get Composer bucket name, config uploads to Composer bucket will be skipped"
+        else
+          echo "Composer Bucket: $$COMPOSER_BUCKET"
+        fi
+        
         echo "Deploying to Cloud Run..."
         gcloud run deploy composer-webhook-trigger \
           --image=gcr.io/$PROJECT_ID/webhook-trigger:$BUILD_ID \
@@ -46,7 +58,7 @@ steps:
           --region=us-central1 \
           --allow-unauthenticated \
           --service-account=mlops-850@$PROJECT_ID.iam.gserviceaccount.com \
-          --set-env-vars=COMPOSER_ENVIRONMENT=mlops-airflow-composer,COMPOSER_LOCATION=us-central1,COMPOSER_DAG_ID=salad_ml_evaluation_pipeline_v1,GCP_PROJECT_ID=$PROJECT_ID,COMPOSER_AIRFLOW_URI=$$AIRFLOW_URI \
+          --set-env-vars=COMPOSER_ENVIRONMENT=mlops-airflow-composer,COMPOSER_LOCATION=us-central1,COMPOSER_DAG_ID=salad_ml_evaluation_pipeline_v1,GCP_PROJECT_ID=$PROJECT_ID,COMPOSER_AIRFLOW_URI=$$AIRFLOW_URI,DVC_BUCKET=mlops-project-dvc-480422,COMPOSER_BUCKET=$$COMPOSER_BUCKET \
           --set-secrets=GITHUB_WEBHOOK_SECRET=github-webhook-secret:latest \
           --memory=512Mi \
           --cpu=1 \

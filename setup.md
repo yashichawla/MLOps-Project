@@ -659,6 +659,30 @@ The Terraform configuration includes Cloud Composer setup. After deploying:
    ./upload_to_composer.sh
    ```
 
+4. Deploy Webhook Trigger Service:
+   ```bash
+   cd terraform/webhook-trigger
+   gcloud builds submit --config cloudbuild.yaml
+   ```
+   
+   The webhook service automatically:
+   - Fetches the Composer Airflow URI
+   - Deploys to Cloud Run
+   - Configures environment variables
+   
+   Get the webhook URL:
+   ```bash
+   gcloud run services describe composer-webhook-trigger \
+     --region us-central1 \
+     --format "value(status.url)"
+   ```
+   
+   Configure in GitHub:
+   - Go to repository Settings → Webhooks
+   - Add webhook with the URL from above + `/webhook`
+   - Select "Just the push event"
+   - Use the same secret from `GITHUB_WEBHOOK_SECRET`
+
 ---
 
 ## Next Steps

@@ -7,13 +7,14 @@ import hmac
 import hashlib
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Tuple
 
 from fastapi import FastAPI, Request, HTTPException, Header, status
 from fastapi.responses import JSONResponse
 import google.auth
 from google.auth.transport.requests import Request as AuthRequest
 from google.oauth2 import service_account
+from google.cloud import storage
 import requests
 
 # Configure logging
@@ -28,6 +29,8 @@ COMPOSER_LOCATION = os.getenv("COMPOSER_LOCATION", "us-central1")
 COMPOSER_DAG_ID = os.getenv("COMPOSER_DAG_ID", "salad_ml_evaluation_pipeline_v1")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+DVC_BUCKET = os.getenv("DVC_BUCKET", "mlops-project-dvc-480422")
+COMPOSER_BUCKET = os.getenv("COMPOSER_BUCKET", "")  # Will be fetched if not set
 
 # Composer Airflow API base URL (will be validated on startup)
 COMPOSER_API_BASE = None
@@ -105,9 +108,16 @@ def get_composer_access_token() -> str:
         )
 
 
-def check_config_files_changed(payload: dict) -> bool:
-    """Check if config files were changed in the push event."""
+def get_changed_config_files(payload: dict) -> List[Tuple[str, str, str]]:
+    """Get list of config files that were changed in the push event.
+    
+    Returns:
+        List of tuples: (file_path, repo_full_name, commit_sha)
+    """
     commits = payload.get("commits", [])
+    repository = payload.get("repository", {})
+    repo_full_name = repository.get("full_name", "")
+    
     # Check for config files in both root-level and dags-level directories
     config_files = [
         "config/data_sources.json",
@@ -115,6 +125,8 @@ def check_config_files_changed(payload: dict) -> bool:
         "dags/config/data_sources.json",
         "dags/config/attack_llm_config.json"
     ]
+    
+    changed_files = []
     
     for commit in commits:
         added = commit.get("added", [])
@@ -130,9 +142,82 @@ def check_config_files_changed(payload: dict) -> bool:
             if any(normalized_path.endswith(config_file) or normalized_path == config_file 
                    for config_file in config_files):
                 logger.info(f"Config file changed: {file_path}")
-                return True
+                changed_files.append((normalized_path, repo_full_name, commit.get("id")))
     
-    return False
+    return changed_files
+
+
+def check_config_files_changed(payload: dict) -> bool:
+    """Check if config files were changed in the push event."""
+    return len(get_changed_config_files(payload)) > 0
+
+
+def download_file_from_github(repo_full_name: str, file_path: str, commit_sha: str) -> Optional[bytes]:
+    """Download file content from GitHub repository."""
+    try:
+        # Use GitHub API to get raw file content
+        # Format: https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}
+        url = f"https://raw.githubusercontent.com/{repo_full_name}/{commit_sha}/{file_path}"
+        logger.info(f"Downloading file from GitHub: {url}")
+        
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return response.content
+    except Exception as e:
+        logger.error(f"Error downloading file from GitHub: {e}")
+        return None
+
+
+def upload_config_to_gcs(file_path: str, file_content: bytes) -> Tuple[bool, List[str]]:
+    """Upload config file to GCS buckets.
+    
+    Returns:
+        Tuple of (success: bool, uploaded_paths: List[str])
+    """
+    uploaded_paths = []
+    success = True
+    
+    try:
+        # Initialize GCS client
+        client = storage.Client(project=GCP_PROJECT_ID)
+        
+        # Determine target paths based on file path
+        if file_path.startswith("dags/config/"):
+            # File is in dags/config/, upload to both buckets with same path
+            target_paths = [
+                (DVC_BUCKET, file_path),  # DVC bucket: dags/config/...
+                (COMPOSER_BUCKET, file_path) if COMPOSER_BUCKET else None  # Composer bucket: dags/config/...
+            ]
+        elif file_path.startswith("config/"):
+            # File is in root config/, upload to dags/config/ in both buckets
+            filename = os.path.basename(file_path)
+            target_paths = [
+                (DVC_BUCKET, f"dags/config/{filename}"),  # DVC bucket: dags/config/...
+                (COMPOSER_BUCKET, f"dags/config/{filename}") if COMPOSER_BUCKET else None  # Composer bucket: dags/config/...
+            ]
+        else:
+            logger.warning(f"Unexpected config file path: {file_path}")
+            return False, []
+        
+        # Upload to each bucket
+        for bucket_name, gcs_path in target_paths:
+            if bucket_name is None or gcs_path is None:
+                continue
+                
+            try:
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(gcs_path)
+                blob.upload_from_string(file_content, content_type="application/json")
+                logger.info(f"Uploaded config to gs://{bucket_name}/{gcs_path}")
+                uploaded_paths.append(f"gs://{bucket_name}/{gcs_path}")
+            except Exception as e:
+                logger.error(f"Error uploading to gs://{bucket_name}/{gcs_path}: {e}")
+                success = False
+        
+        return success, uploaded_paths
+    except Exception as e:
+        logger.error(f"Error uploading config to GCS: {e}")
+        return False, uploaded_paths
 
 
 def trigger_composer_dag(access_token: str) -> dict:
@@ -230,15 +315,48 @@ async def github_webhook(
             )
         
         # Check if config files changed
-        if not check_config_files_changed(payload):
+        changed_config_files = get_changed_config_files(payload)
+        if not changed_config_files:
             logger.info("No config files changed, skipping DAG trigger")
             return JSONResponse(
                 status_code=status.HTTP_200_OK,
                 content={"status": "skipped", "reason": "No config files changed"}
             )
         
+        # Upload changed config files to GCS
+        logger.info(f"Found {len(changed_config_files)} config file(s) changed, uploading to GCS...")
+        upload_results = []
+        all_uploads_successful = True
+        
+        for file_path, repo_full_name, commit_sha in changed_config_files:
+            # Download file from GitHub
+            file_content = download_file_from_github(repo_full_name, file_path, commit_sha)
+            if not file_content:
+                logger.error(f"Failed to download {file_path} from GitHub")
+                all_uploads_successful = False
+                continue
+            
+            # Upload to GCS
+            success, uploaded_paths = upload_config_to_gcs(file_path, file_content)
+            if success:
+                logger.info(f"Successfully uploaded {file_path} to GCS")
+                upload_results.append({
+                    "file": file_path,
+                    "uploaded_to": uploaded_paths
+                })
+            else:
+                logger.error(f"Failed to upload {file_path} to GCS")
+                all_uploads_successful = False
+                upload_results.append({
+                    "file": file_path,
+                    "error": "Upload failed"
+                })
+        
+        if not all_uploads_successful:
+            logger.warning("Some config files failed to upload, but continuing with DAG trigger")
+        
         # Get access token and trigger DAG
-        logger.info(f"Config files changed, triggering DAG: {COMPOSER_DAG_ID}")
+        logger.info(f"Config files uploaded, triggering DAG: {COMPOSER_DAG_ID}")
         access_token = get_composer_access_token()
         dag_run = trigger_composer_dag(access_token)
         
@@ -249,7 +367,9 @@ async def github_webhook(
             content={
                 "status": "success",
                 "dag_run_id": dag_run.get("dag_run_id"),
-                "message": f"DAG {COMPOSER_DAG_ID} triggered successfully"
+                "message": f"DAG {COMPOSER_DAG_ID} triggered successfully",
+                "config_uploads": upload_results,
+                "all_uploads_successful": all_uploads_successful
             }
         )
     
