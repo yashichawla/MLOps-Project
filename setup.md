@@ -52,6 +52,7 @@ Before starting, ensure you have:
 1. **Google Cloud Platform Account**
    - GCP project with billing enabled
    - Service account key JSON file with GCS access
+   - **DVC GCS bucket created** (default: `mlops-project-dvc-480422`) - see [GCP Configuration](#gcp-configuration) for creation instructions
 
 2. **HuggingFace Account**
    - Read-only token from https://huggingface.co/settings/tokens
@@ -300,6 +301,20 @@ The project uses Google Cloud Storage (GCS) for:
 **Bucket Configuration:**
 - Default bucket: `mlops-project-dvc-480422`
 - Project ID: `break-the-bot-480422`
+
+**Important:** The DVC bucket (`mlops-project-dvc-480422` by default) is **not created by Terraform**. You must create it manually before deploying or running the pipeline:
+
+```bash
+# Create the DVC bucket
+gsutil mb -p break-the-bot-480422 -l us-central1 gs://mlops-project-dvc-480422
+
+# Or using gcloud
+gcloud storage buckets create gs://mlops-project-dvc-480422 \
+  --project=break-the-bot-480422 \
+  --location=us-central1
+```
+
+Ensure the service account has appropriate permissions (`roles/storage.objectViewer` or `roles/storage.objectAdmin`) on this bucket.
 
 To use different buckets, update:
 - `.env` file (for local development)
@@ -620,6 +635,20 @@ For detailed deployment instructions, see [deployment_guide.md](./deployment_gui
 - Terraform installed
 - GCP project with billing enabled
 - Appropriate IAM permissions
+- **DVC GCS bucket must exist** (default: `mlops-project-dvc-480422`)
+
+**Note:** The DVC bucket is **not created by Terraform**. It must be created manually before deploying infrastructure. The Terraform configuration references an existing bucket via the `dvc_bucket_name` variable.
+
+**Create DVC Bucket (if not exists):**
+```bash
+# Create the DVC bucket before running Terraform
+gsutil mb -p break-the-bot-480422 -l us-central1 gs://mlops-project-dvc-480422
+
+# Or using gcloud
+gcloud storage buckets create gs://mlops-project-dvc-480422 \
+  --project=break-the-bot-480422 \
+  --location=us-central1
+```
 
 **Deploy:**
 ```bash
