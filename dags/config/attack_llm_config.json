@@ -3,7 +3,7 @@
     {
       "name": "llama-3-8b",
       "model_id": "meta-llama/Meta-Llama-3-8B-Instruct",
-      "provider": "novita",
+      "provider": null,
       "max_new_tokens": 256,
       "temperature": 0.2,
       "top_p": 0.9,
@@ -17,7 +17,7 @@
     {
       "name": "llama-3-70b",
       "model_id": "meta-llama/Meta-Llama-3-70B-Instruct",
-      "provider": "novita",
+      "provider": null,
       "max_new_tokens": 256,
       "temperature": 0.2,
       "top_p": 0.9,
@@ -31,7 +31,7 @@
     {
       "name": "llama-3.1-8b",
       "model_id": "meta-llama/Llama-3.1-8B-Instruct",
-      "provider": "novita",
+      "provider": null,
       "max_new_tokens": 256,
       "temperature": 0.25,
       "top_p": 0.9,
@@ -45,7 +45,7 @@
     {
       "name": "moonshot-instruct",
       "model_id": "moonshotai/Kimi-K2-Instruct-0905",
-      "provider": "novita",
+      "provider": null,
       "max_new_tokens": 256,
       "temperature": 0.3,
       "top_p": 0.9,
