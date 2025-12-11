@@ -114,8 +114,8 @@ cd deploy
 
 **Access Points:**
 - Airflow UI: http://localhost:8080 (admin/admin)
-- API: http://localhost:8080 (if running separately)
-- Dashboard: http://localhost:8501
+- API: http://localhost:8080 (if running separately) or https://metrics-api-hel7hrgq5q-uc.a.run.app (Cloud Run)
+- Dashboard: http://localhost:8501 (local) or https://metrics-dashboard-hel7hrgq5q-uc.a.run.app (Cloud Run)
 
 ---
 
@@ -558,9 +558,11 @@ tail -f deploy/api.log
 **Error:** Dashboard shows "API connection failed"
 
 **Solution:**
-- Verify API is running: `curl http://localhost:8080/health`
-- Check API URL in dashboard sidebar (should be `http://localhost:8080`)
+- **For local dashboard:** Verify API is running: `curl http://localhost:8080/health`
+- **For Cloud Run dashboard:** Verify API is running: `curl https://metrics-api-hel7hrgq5q-uc.a.run.app/health`
+- Check API URL in dashboard sidebar
 - Check for CORS issues in API logs
+- Verify the API URL is correct in `deploy/dashboard/config.py` (for local) or Cloud Run environment variables (for deployed)
 
 ### Getting Help
 
@@ -626,6 +628,92 @@ gcloud run services describe metrics-api \
 # Test health endpoint
 curl https://your-service-url.run.app/health
 ```
+
+For detailed deployment instructions, see [deployment_guide.md](./deployment_guide.md).
+
+### Deploy Dashboard to Cloud Run
+
+**Prerequisites:**
+- gcloud CLI installed and authenticated
+- GCP project with Cloud Run API enabled
+- API service already deployed (dashboard connects to it)
+
+**Deploy using Cloud Build:**
+```bash
+cd MLOps-Project
+gcloud builds submit --config cloudbuild-dashboard.yaml
+```
+
+**Note:** If Cloud Build fails due to build context path issues, use manual deployment instead.
+
+**Deploy manually (Recommended if Cloud Build fails):**
+```bash
+cd deploy
+./deploy_dashboard.sh
+```
+
+Or step by step:
+```bash
+# 1. Set project
+gcloud config set project break-the-bot-480422
+
+# 2. Authenticate Docker
+gcloud auth configure-docker
+
+# 3. Build and push image
+cd MLOps-Project/deploy/dashboard
+docker build -t gcr.io/break-the-bot-480422/metrics-dashboard:latest .
+docker push gcr.io/break-the-bot-480422/metrics-dashboard:latest
+
+# 4. Deploy to Cloud Run
+gcloud run deploy metrics-dashboard \
+  --image gcr.io/break-the-bot-480422/metrics-dashboard:latest \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --service-account=mlops-850@break-the-bot-480422.iam.gserviceaccount.com \
+  --memory=512Mi \
+  --cpu=1 \
+  --max-instances=10 \
+  --timeout=300
+```
+
+**Verify deployment:**
+```bash
+# Get service URL
+gcloud run services describe metrics-dashboard \
+  --region us-central1 \
+  --format "value(status.url)"
+
+# Test dashboard accessibility
+curl -s -o /dev/null -w "%{http_code}" https://metrics-dashboard-hel7hrgq5q-uc.a.run.app
+# Should return 200
+
+# Open the URL in your browser to access the dashboard
+# Current URL: https://metrics-dashboard-hel7hrgq5q-uc.a.run.app
+```
+
+**Configuration:**
+- The dashboard is configured to connect to the Cloud Run API service at: `https://metrics-api-hel7hrgq5q-uc.a.run.app`
+- This is hardcoded as the default, but can be overridden via the `METRICS_API_URL` environment variable if needed
+- **Deployed Dashboard URL:** `https://metrics-dashboard-hel7hrgq5q-uc.a.run.app`
+
+**Troubleshooting:**
+
+- **Dashboard Not Loading:**
+  ```bash
+  gcloud run services logs read metrics-dashboard --region us-central1
+  ```
+
+- **API Connection Issues:**
+  - Verify the API service is running: `curl https://metrics-api-hel7hrgq5q-uc.a.run.app/health`
+  - Check the dashboard sidebar for API connection status
+  - If the API URL has changed, update it:
+    ```bash
+    gcloud run services update metrics-dashboard \
+      --region us-central1 \
+      --set-env-vars METRICS_API_URL=https://new-api-url.run.app
+    ```
 
 For detailed deployment instructions, see [deployment_guide.md](./deployment_guide.md).
 

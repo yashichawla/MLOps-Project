@@ -1,0 +1,138 @@
+steps:
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/metrics-dashboard:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/metrics-dashboard:latest'
+      - '-f'
+      - './deploy/dashboard/Dockerfile'
+      - './deploy/dashboard'
+
+  # Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/metrics-dashboard:$BUILD_ID'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/metrics-dashboard:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'metrics-dashboard'
+      - '--image=gcr.io/$PROJECT_ID/metrics-dashboard:$BUILD_ID'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--allow-unauthenticated'
+      - '--service-account=mlops-850@break-the-bot-480422.iam.gserviceaccount.com'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--max-instances=10'
+      - '--timeout=300'
+
+  # Verify deployment
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Verifying Deployment"
+        echo "=========================================="
+        
+        # Wait for service to be ready
+        echo "Waiting for service to be ready..."
+        sleep 15
+        
+        # Get service URL
+        SERVICE_URL=$$(gcloud run services describe metrics-dashboard \
+          --region=us-central1 \
+          --format="value(status.url)")
+        
+        echo "Service URL: $$SERVICE_URL"
+        
+        # Health check with retries (check if dashboard loads)
+        MAX_RETRIES=5
+        RETRY_COUNT=0
+        HEALTH_CHECK_PASSED=false
+        
+        while [ $$RETRY_COUNT -lt $$MAX_RETRIES ]; do
+          echo "Health check attempt $$((RETRY_COUNT + 1))/$$MAX_RETRIES..."
+          
+          HTTP_CODE=$$(curl -s -o /dev/null -w "%{http_code}" $$SERVICE_URL || echo "000")
+          
+          if [ "$$HTTP_CODE" = "200" ]; then
+            echo "✅ Dashboard is accessible"
+            HEALTH_CHECK_PASSED=true
+            break
+          else
+            echo "⏳ Dashboard check returned HTTP $$HTTP_CODE, retrying..."
+          fi
+          
+          RETRY_COUNT=$$((RETRY_COUNT + 1))
+          sleep 5
+        done
+        
+        if [ "$$HEALTH_CHECK_PASSED" = false ]; then
+          echo "❌ Dashboard health check failed after $$MAX_RETRIES attempts"
+          exit 1
+        fi
+
+  # Monitor and log deployment status
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Deployment Status and Logging"
+        echo "=========================================="
+        
+        SERVICE_URL=$$(gcloud run services describe metrics-dashboard \
+          --region=us-central1 \
+          --format="value(status.url)")
+        
+        echo "Deployment Summary:"
+        echo "  Service: metrics-dashboard"
+        echo "  Region: us-central1"
+        echo "  URL: $$SERVICE_URL"
+        echo "  Image: gcr.io/$PROJECT_ID/metrics-dashboard:$BUILD_ID"
+        echo "  Build ID: $BUILD_ID"
+        echo "  Commit SHA: ${COMMIT_SHA:-not available}"
+        echo "  Timestamp: $$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+        
+        echo ""
+        echo "Service Status:"
+        gcloud run services describe metrics-dashboard \
+          --region=us-central1 \
+          --format="table(status.conditions,status.url,status.latestReadyRevisionName,status.latestCreatedRevisionName)"
+        
+        echo ""
+        echo "Recent Service Logs (last 5 entries):"
+        gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=metrics-dashboard" \
+          --limit=5 \
+          --format="table(timestamp,severity,textPayload)" \
+          --freshness=5m || echo "Could not fetch recent logs"
+        
+        echo ""
+        echo "✅ Deployment completed successfully"
+        echo "Dashboard URL: $$SERVICE_URL"
+        echo "Open the URL in your browser to access the dashboard"
+
+images:
+  - 'gcr.io/$PROJECT_ID/metrics-dashboard:$BUILD_ID'
+  - 'gcr.io/$PROJECT_ID/metrics-dashboard:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+

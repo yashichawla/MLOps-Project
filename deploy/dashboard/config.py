@@ -7,9 +7,10 @@ class DashboardConfig:
     """Dashboard configuration loaded from environment variables or defaults."""
     
     # API Configuration
+    # Default to Cloud Run API URL, allow override via environment variable
     API_BASE_URL: str = os.getenv(
         "METRICS_API_URL",
-        os.getenv("STREAMLIT_SECRETS_METRICS_API_URL", "http://localhost:8080")
+        os.getenv("STREAMLIT_SECRETS_METRICS_API_URL", "https://metrics-api-hel7hrgq5q-uc.a.run.app")
     )
     
     # Refresh Configuration
