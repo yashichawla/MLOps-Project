@@ -10,7 +10,7 @@
       "seed": 42,
       "system_prompt": "",
       "sample": true,
-      "n_samples": 10,
+      "n_samples": 5,
       "csv_path": "data/processed/processed_data.csv",
       "out_path": "data/responses/model_responses_llama3_8b.csv"
     },
@@ -24,7 +24,7 @@
       "seed": 42,
       "system_prompt": "",
       "sample": true,
-      "n_samples": 10,
+      "n_samples": 5,
       "csv_path": "data/processed/processed_data.csv",
       "out_path": "data/responses/model_responses_llama3_70b.csv"
     },
@@ -38,7 +38,7 @@
       "seed": 42,
       "system_prompt": "",
       "sample": true,
-      "n_samples": 10,
+      "n_samples": 5,
       "csv_path": "data/processed/processed_data.csv",
       "out_path": "data/responses/model_responses_llama3.1_8b.csv"
     },
@@ -52,7 +52,7 @@
       "seed": 42,
       "system_prompt": "",
       "sample": true,
-      "n_samples": 10,
+      "n_samples": 5,
       "csv_path": "data/processed/processed_data.csv",
       "out_path": "data/responses/model_responses_moonshot_instruct.csv"
     },
@@ -66,7 +66,7 @@
       "seed": 42,
       "system_prompt": "",
       "sample": true,
-      "n_samples": 10,
+      "n_samples": 5,
       "csv_path": "data/processed/processed_data.csv",
       "out_path": "data/responses/model_responses_minimax.csv"
     }
